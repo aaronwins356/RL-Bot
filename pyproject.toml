@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rlbot-pro"
+version = "0.1.0"
+description = "Deterministic Rocket League bot scaffolding"
+authors = [{name = "RL Bot Engineers"}]
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "black==24.8.0",
+    "ruff==0.5.6",
+    "mypy==1.11.1",
+    "pytest==8.3.2",
+]
+
+[project.scripts]
+rlbot-pro = "cli:main"
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.ruff]
+extend-exclude = ["core", "gui", "telemetry.py", "bot_manager.py", "controls_panel.py", "main.py"]
+line-length = 88
+
+[tool.ruff.lint]
+per-file-ignores = {"tests/*" = ["D100", "D101", "D102", "D103", "D104", "ANN201"], "cli.py" = ["D100"]}
+select = ["E", "F", "I", "B", "UP", "ANN", "D"]
+ignore = ["D104", "D105", "D107"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unused_configs = true
+ignore_missing_imports = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.setuptools.packages.find]
+include = ["rlbot_pro*"]
