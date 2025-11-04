@@ -1,122 +1,101 @@
-"""Three-dimensional vector utilities for Rocket League bots."""
+import numpy as np
+from typing import Tuple
 
-from __future__ import annotations
-
-from collections.abc import Iterator
-from dataclasses import dataclass
-from math import acos, sqrt
+Vector = Tuple[float, float, float]
 
 
-@dataclass(frozen=True)
-class Vector3:
-    """Simple three-dimensional vector representation."""
-
-    x: float
-    y: float
-    z: float
-
-    def __iter__(self: Vector3) -> Iterator[float]:
-        yield self.x
-        yield self.y
-        yield self.z
-
-    def __add__(self: Vector3, other: Vector3) -> Vector3:
-        return add(self, other)
-
-    def __sub__(self: Vector3, other: Vector3) -> Vector3:
-        return subtract(self, other)
-
-    def __mul__(self: Vector3, scalar: float) -> Vector3:
-        return scale(self, scalar)
-
-    __rmul__ = __mul__
+def vec3(x: float, y: float, z: float) -> np.ndarray:
+    """Creates a 3D numpy vector."""
+    return np.array([x, y, z], dtype=float)
 
 
-def add(a: Vector3, b: Vector3) -> Vector3:
-    """Return the sum of two vectors."""
-    return Vector3(a.x + b.x, a.y + b.y, a.z + b.z)
+def to_vec3(v: Vector) -> np.ndarray:
+    """Converts a tuple Vector to a numpy array."""
+    return np.array(v, dtype=float)
 
 
-def subtract(a: Vector3, b: Vector3) -> Vector3:
-    """Return the difference of two vectors."""
-    return Vector3(a.x - b.x, a.y - b.y, a.z - b.z)
+def to_tuple(v: np.ndarray) -> Vector:
+    """Converts a numpy array to a tuple Vector."""
+    return (v[0], v[1], v[2])
 
 
-def scale(vec: Vector3, scalar: float) -> Vector3:
-    """Scale a vector by a scalar."""
-    return Vector3(vec.x * scalar, vec.y * scalar, vec.z * scalar)
+def normalize(v: np.ndarray) -> np.ndarray:
+    """Normalizes a vector."""
+    norm = np.linalg.norm(v)
+    return v / norm if norm > 1e-6 else np.array([0.0, 0.0, 0.0])
 
 
-def dot(a: Vector3, b: Vector3) -> float:
-    """Return the dot product of two vectors."""
-    return a.x * b.x + a.y * b.y + a.z * b.z
+def dot(v1: np.ndarray, v2: np.ndarray) -> float:
+    """Computes the dot product of two vectors."""
+    return np.dot(v1, v2)
 
 
-def cross(a: Vector3, b: Vector3) -> Vector3:
-    """Return the cross product of two vectors."""
-    return Vector3(
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x,
-    )
+def cross(v1: np.ndarray, v2: np.ndarray) -> np.ndarray:
+    """Computes the cross product of two vectors."""
+    return np.cross(v1, v2)
 
 
-def magnitude(vec: Vector3) -> float:
-    """Return the magnitude of a vector."""
-    return sqrt(vec.x * vec.x + vec.y * vec.y + vec.z * vec.z)
+def look_at(target: np.ndarray, current_up: np.ndarray) -> np.ndarray:
+    """
+    Creates a rotation matrix that makes the 'forward' vector point towards 'target'.
+    'current_up' is used to define the 'up' direction.
+    Returns a 3x3 rotation matrix.
+    """
+    forward = normalize(target)
+    left = normalize(cross(current_up, forward))
+    up = normalize(cross(forward, left))
+    return np.array([forward, left, up]).T
 
 
-def normalize(vec: Vector3) -> Vector3:
-    """Return a unit vector pointing in the same direction as the input."""
-    length = magnitude(vec)
-    if length <= 1e-6:
-        return Vector3(0.0, 0.0, 0.0)
-    inv = 1.0 / length
-    return Vector3(vec.x * inv, vec.y * inv, vec.z * inv)
+def rotation_matrix_from_euler(roll: float, pitch: float, yaw: float) -> np.ndarray:
+    """
+    Creates a 3x3 rotation matrix from Euler angles (roll, pitch, yaw).
+    Order of application: yaw, pitch, roll.
+    """
+    cr = np.cos(roll)
+    sr = np.sin(roll)
+    cp = np.cos(pitch)
+    sp = np.sin(pitch)
+    cy = np.cos(yaw)
+    sy = np.sin(yaw)
+
+    # Yaw matrix
+    R_z = np.array([
+        [cy, -sy, 0],
+        [sy, cy, 0],
+        [0, 0, 1]
+    ])
+
+    # Pitch matrix
+    R_y = np.array([
+        [cp, 0, sp],
+        [0, 1, 0],
+        [-sp, 0, cp]
+    ])
+
+    # Roll matrix
+    R_x = np.array([
+        [1, 0, 0],
+        [0, cr, -sr],
+        [0, sr, cr]
+    ])
+
+    return R_z @ R_y @ R_x
 
 
-def clamp(value: float, minimum: float, maximum: float) -> float:
-    """Clamp a scalar value within [minimum, maximum]."""
-    return max(minimum, min(maximum, value))
+def clamp(value: float, min_val: float, max_val: float) -> float:
+    """Clamps a value between a minimum and maximum."""
+    return max(min_val, min(value, max_val))
 
 
-def distance(a: Vector3, b: Vector3) -> float:
-    """Return the Euclidean distance between two points."""
-    dx = a.x - b.x
-    dy = a.y - b.y
-    dz = a.z - b.z
-    return sqrt(dx * dx + dy * dy + dz * dz)
+def angle_between(v1: np.ndarray, v2: np.ndarray) -> float:
+    """Computes the angle in radians between two vectors."""
+    v1_norm = normalize(v1)
+    v2_norm = normalize(v2)
+    return np.arccos(clamp(dot(v1_norm, v2_norm), -1.0, 1.0))
 
 
-def angle_between(a: Vector3, b: Vector3) -> float:
-    """Return the angle between two vectors in radians."""
-    mag_product = magnitude(a) * magnitude(b)
-    if mag_product <= 1e-9:
-        return 0.0
-    cos_theta = clamp(dot(a, b) / mag_product, -1.0, 1.0)
-    return acos(cos_theta)
-
-
-def lerp(a: Vector3, b: Vector3, alpha: float) -> Vector3:
-    """Linearly interpolate between two points."""
-    return Vector3(
-        a.x + (b.x - a.x) * alpha,
-        a.y + (b.y - a.y) * alpha,
-        a.z + (b.z - a.z) * alpha,
-    )
-
-
-__all__ = [
-    "Vector3",
-    "add",
-    "subtract",
-    "scale",
-    "dot",
-    "cross",
-    "magnitude",
-    "normalize",
-    "clamp",
-    "distance",
-    "angle_between",
-    "lerp",
-]
+def rotate_vector(v: np.ndarray, axis: np.ndarray, angle: float) -> np.ndarray:
+    """Rotates a vector around an axis by a given angle using Rodrigues' rotation formula."""
+    axis = normalize(axis)
+    return v * np.cos(angle) + cross(axis, v) * np.sin(angle) + axis * dot(axis, v) * (1 - np.cos(angle))

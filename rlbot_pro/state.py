@@ -1,39 +1,37 @@
-"""Core game state data structures."""
+from dataclasses import dataclass
+from typing import Tuple
 
-from __future__ import annotations
-
-from dataclasses import dataclass, field
-
-from .math3d import Vector3
+Vector = Tuple[float, float, float]
 
 
 @dataclass(frozen=True)
 class BallState:
-    """Ball kinematic state."""
+    """Represents the state of the ball."""
 
-    position: Vector3
-    velocity: Vector3
+    pos: Vector
+    vel: Vector
+    ang_vel: Vector = (0.0, 0.0, 0.0)
 
 
 @dataclass(frozen=True)
 class CarState:
-    """Car kinematic state and status flags."""
+    """Represents the state of a car."""
 
-    position: Vector3
-    velocity: Vector3
+    pos: Vector
+    vel: Vector
+    ang_vel: Vector
+    forward: Vector
+    up: Vector
     boost: float
-    has_jump: bool
-    is_demolished: bool
+    has_flip: bool
     on_ground: bool
-    forward: Vector3 = field(default_factory=lambda: Vector3(1.0, 0.0, 0.0))
-    up: Vector3 = field(default_factory=lambda: Vector3(0.0, 0.0, 1.0))
-    angular_velocity: Vector3 = field(default_factory=lambda: Vector3(0.0, 0.0, 0.0))
+    time: float
 
 
 @dataclass(frozen=True)
 class GameState:
-    """Aggregated game state for a single agent."""
+    """Represents the overall game state."""
 
     ball: BallState
     car: CarState
-    time_remaining: float | None
+    dt: float

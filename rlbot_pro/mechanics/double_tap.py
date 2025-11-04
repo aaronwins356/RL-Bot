@@ -1,121 +1,200 @@
-"""Deterministic double-tap execution with bounce prediction."""
+from dataclasses import dataclass, field
+from typing import Optional
 
-from __future__ import annotations
+import numpy as np
 
-from dataclasses import dataclass
+from rlbot_pro.control import Controls
+from rlbot_pro.math3d import vec3, normalize, dot, angle_between, clamp
+from rlbot_pro.physics_helpers import (
+    GRAVITY,
+    CAR_MAX_SPEED,
+    BOOST_ACCELERATION,
+    constant_acceleration_kinematics,
+    estimate_ball_bounce,
+)
+from rlbot_pro.sensing import (
+    get_car_forward_vector,
+    get_car_up_vector,
+    predict_ball_pos_at_time,
+    get_car_local_coords,
+)
+from rlbot_pro.state import GameState, Vector
+from rlbot_pro.mechanics import Mechanic, get_pitch_yaw_roll
 
-from ..control import Controls
-from ..math3d import Vector3, clamp, dot, magnitude, normalize, subtract, add, scale
-from ..physics_helpers import estimate_required_speed, predict_backboard_bounce
-from ..state import GameState
 
-
-@dataclass(frozen=True)
+@dataclass
 class DoubleTapParams:
-    """Configuration for a backboard double tap."""
+    """Parameters for the Double Tap mechanic."""
 
-    backboard_y: float
-    restitution: float
-    first_touch_speed: float
-    second_arrival_time: float
-    boost_alignment_threshold: float = 0.6
+    # Max time to wait for a backboard bounce
+    max_bounce_time: float = 2.0
+    # Desired target for the first touch (e.g., towards opponent's net)
+    first_touch_target: Vector = (0.0, 5120.0, 0.0)
+    # How close to the ball for the first touch
+    first_touch_distance: float = 150.0
+    # How close to the ball for the second touch
+    second_touch_distance: float = 150.0
 
 
-class DoubleTapMechanic:
-    """Two-phase double tap using backboard bounce prediction."""
+@dataclass
+class DoubleTap(Mechanic):
+    """
+    Executes a double tap maneuver.
+    Backboard read: predict bounce point, plan first touch target, then chase second intercept.
+    """
 
-    def __init__(self, params: DoubleTapParams) -> None:
-        self.params = params
-        self._prepared = False
-        self._bounce_point: Vector3 | None = None
-        self._post_bounce_velocity: Vector3 | None = None
-        self._bounce_time: float = 0.0
-        self._phase = "setup"
-        self._complete = False
-        self._invalid = False
+    params: DoubleTapParams = field(default_factory=DoubleTapParams)
+    _state: str = "INIT"  # INIT, APPROACH_FIRST_TOUCH, FIRST_TOUCH_MADE, CHASE_SECOND_TOUCH
+    _bounce_pos: Optional[np.ndarray] = None
+    _bounce_time: Optional[float] = None
+    _first_touch_pos: Optional[np.ndarray] = None
+    _first_touch_time: Optional[float] = None
+    _second_touch_target_pos: Optional[np.ndarray] = None
 
-    def prep(self, state: GameState) -> None:
-        impact, velocity, time_to_board = predict_backboard_bounce(
-            state.ball.position, state.ball.velocity, self.params.backboard_y, self.params.restitution
+    def prep(self, gs: GameState, **kwargs) -> None:
+        """
+        Initializes the double tap mechanic by predicting a backboard bounce.
+        """
+        self._state = "INIT"
+        self._bounce_pos = None
+        self._bounce_time = None
+        self._first_touch_pos = None
+        self._first_touch_time = None
+        self._second_touch_target_pos = None
+
+        # Estimate ball bounce on the backboard
+        bounce_result = estimate_ball_bounce(
+            gs.ball, np.array(gs.car.pos), max_time=self.params.max_bounce_time
         )
-        self._bounce_point = impact
-        self._post_bounce_velocity = velocity
-        self._bounce_time = time_to_board
-        self._phase = "setup"
-        self._complete = False
-        self._invalid = time_to_board == float("inf") or time_to_board <= 0.0 or state.car.is_demolished
-        self._prepared = True
+        if bounce_result:
+            self._bounce_pos, self._bounce_time = bounce_result
+            # Plan first touch target based on bounce
+            # Aim to hit the ball towards the center of the opponent's net after the bounce
+            self._first_touch_pos = self._bounce_pos + normalize(
+                np.array(self.params.first_touch_target) - self._bounce_pos
+            ) * 100
+            self._first_touch_time = gs.car.time + self._bounce_time
 
-    def _forward(self, state: GameState) -> Vector3:
-        forward = normalize(state.car.forward)
-        if magnitude(forward) <= 1e-5:
-            return Vector3(1.0, 0.0, 0.0)
-        return forward
+    def step(self, gs: GameState, **kwargs) -> Controls:
+        """
+        Calculates controls based on the current state of the double tap.
+        """
+        controls = Controls()
+        car_pos = np.array(gs.car.pos)
+        car_vel = np.array(gs.car.vel)
+        car_forward = get_car_forward_vector(gs.car)
+        car_up = get_car_up_vector(gs.car)
+        ball_pos = np.array(gs.ball.pos)
+        ball_vel = np.array(gs.ball.vel)
 
-    def _approach_first_touch(self, state: GameState) -> Controls:
-        assert self._bounce_point is not None
-        intercept_target = Vector3(
-            self._bounce_point.x,
-            self._bounce_point.y - 150.0,
-            max(self._bounce_point.z - 150.0, 500.0),
-        )
-        to_target = subtract(intercept_target, state.car.position)
-        direction = normalize(to_target)
-        forward = self._forward(state)
-        throttle = clamp(self.params.first_touch_speed / 2300.0, 0.0, 1.0)
-        steer = clamp(direction.y * 1.5, -1.0, 1.0)
-        pitch = clamp(-direction.z * 1.2, -1.0, 1.0)
-        boost = dot(forward, direction) > self.params.boost_alignment_threshold and state.car.boost > 10.0
-        jump = state.car.on_ground and state.car.has_jump and self._bounce_time < 1.0
-        return Controls(throttle, steer, pitch, steer, 0.0, boost, jump, False)
+        if self._state == "INIT":
+            if self._first_touch_pos is not None:
+                self._state = "APPROACH_FIRST_TOUCH"
+            else:
+                # No viable bounce, just drive towards ball
+                target_direction = normalize(ball_pos - car_pos)
+                pitch, yaw, roll = get_pitch_yaw_roll(
+                    car_forward, car_up, target_direction, vec3(0, 0, 1)
+                )
+                return Controls(
+                    throttle=1.0,
+                    boost=True,
+                    pitch=clamp(pitch * 3, -1.0, 1.0),
+                    yaw=clamp(yaw * 3, -1.0, 1.0),
+                    roll=clamp(roll * 3, -1.0, 1.0),
+                )
 
-    def _second_intercept(self, state: GameState) -> Controls:
-        assert self._bounce_point is not None
-        assert self._post_bounce_velocity is not None
-        target_time = self.params.second_arrival_time
-        travel = subtract(
-            add(self._bounce_point, scale(self._post_bounce_velocity, target_time)),
-            state.car.position,
-        )
-        direction = normalize(travel)
-        forward = self._forward(state)
-        distance = magnitude(travel)
-        required_speed = estimate_required_speed(distance, max(target_time, 0.2))
-        throttle = clamp(required_speed / 2300.0, 0.0, 1.0)
-        steer = clamp(direction.y * 1.8, -1.0, 1.0)
-        pitch = clamp(-direction.z * 1.5, -1.0, 1.0)
-        boost = dot(forward, direction) > self.params.boost_alignment_threshold and state.car.boost > 0.0
-        jump = not state.car.on_ground and state.car.has_jump and distance < 250.0
-        return Controls(throttle, steer, pitch, steer, 0.0, boost, jump, False)
+        if self._state == "APPROACH_FIRST_TOUCH":
+            if self._first_touch_pos is None:
+                self._state = "INIT"  # Re-evaluate if target disappeared
+                return controls
 
-    def step(self, state: GameState, dt: float = 1.0 / 60.0) -> Controls:  # pylint: disable=unused-argument
-        if not self._prepared:
-            self.prep(state)
-        if self._invalid or self._bounce_point is None:
-            return Controls(0.0, 0.0, 0.0, 0.0, 0.0, False, False, False)
+            target_direction = normalize(self._first_touch_pos - car_pos)
+            pitch, yaw, roll = get_pitch_yaw_roll(
+                car_forward, car_up, target_direction, vec3(0, 0, 1)
+            )
+            controls = Controls(
+                throttle=1.0,
+                boost=True,
+                pitch=clamp(pitch * 3, -1.0, 1.0),
+                yaw=clamp(yaw * 3, -1.0, 1.0),
+                roll=clamp(roll * 3, -1.0, 1.0),
+            )
 
-        if self._phase == "setup":
-            controls = self._approach_first_touch(state)
-            if state.ball.position.y >= self.params.backboard_y - 50.0:
-                self._phase = "finish"
-            return controls
+            if np.linalg.norm(ball_pos - car_pos) < self.params.first_touch_distance:
+                self._state = "FIRST_TOUCH_MADE"
+                # Predict second touch target after first touch
+                # This is a very simplified prediction; a real bot would use ball prediction
+                self._second_touch_target_pos = predict_ball_pos_at_time(gs.ball, 0.5) # Predict 0.5s after first touch
 
-        controls = self._second_intercept(state)
-        distance_to_target = magnitude(subtract(self._bounce_point, state.car.position))
-        self._complete = distance_to_target < 150.0 and not state.car.has_jump
-        self._invalid = state.car.boost <= 0.0 and distance_to_target > 600.0
+        elif self._state == "FIRST_TOUCH_MADE":
+            # Chase the ball for the second touch
+            if self._second_touch_target_pos is None:
+                # Fallback to just chasing the ball
+                target_direction = normalize(ball_pos - car_pos)
+            else:
+                target_direction = normalize(self._second_touch_target_pos - car_pos)
+
+            pitch, yaw, roll = get_pitch_yaw_roll(
+                car_forward, car_up, target_direction, vec3(0, 0, 1)
+            )
+            controls = Controls(
+                throttle=1.0,
+                boost=True,
+                pitch=clamp(pitch * 3, -1.0, 1.0),
+                yaw=clamp(yaw * 3, -1.0, 1.0),
+                roll=clamp(roll * 3, -1.0, 1.0),
+            )
+
+            if np.linalg.norm(ball_pos - car_pos) < self.params.second_touch_distance:
+                self._state = "CHASE_SECOND_TOUCH" # Indicate we are ready for second touch
+
+        elif self._state == "CHASE_SECOND_TOUCH":
+            # Attempt the second touch
+            target_direction = normalize(ball_pos - car_pos)
+            pitch, yaw, roll = get_pitch_yaw_roll(
+                car_forward, car_up, target_direction, vec3(0, 0, 1)
+            )
+            controls = Controls(
+                throttle=1.0,
+                boost=True,
+                pitch=clamp(pitch * 3, -1.0, 1.0),
+                yaw=clamp(yaw * 3, -1.0, 1.0),
+                roll=clamp(roll * 3, -1.0, 1.0),
+                jump=True, # Attempt a jump to hit the ball
+            )
+
         return controls
 
-    def is_complete(self, state: GameState) -> bool:
-        if not self._prepared:
-            self.prep(state)
-        return self._complete
+    def is_complete(self, gs: GameState) -> bool:
+        """
+        The double tap is complete if the ball has been hit twice,
+        or if the ball is too far from the car.
+        """
+        # Very simplified: assume complete if ball has high velocity after first touch
+        if self._state == "CHASE_SECOND_TOUCH" and np.linalg.norm(np.array(gs.ball.vel)) > 1500:
+            return True
+        
+        # If ball is too far from car after first touch
+        if self._state != "INIT" and np.linalg.norm(np.array(gs.ball.pos) - np.array(gs.car.pos)) > 1000:
+            return True
 
-    def is_invalid(self, state: GameState) -> bool:
-        if not self._prepared:
-            self.prep(state)
-        return self._invalid
+        return False
 
+    def is_invalid(self, gs: GameState) -> bool:
+        """
+        The double tap is invalid if the initial bounce prediction fails,
+        or if the car is too far from the ball at any stage.
+        """
+        if self._state == "INIT" and self._bounce_pos is None:
+            return True
+        
+        # If car is on ground during aerial phase of double tap
+        if self._state in ["FIRST_TOUCH_MADE", "CHASE_SECOND_TOUCH"] and gs.car.on_ground:
+            return True
+        
+        # If ball is too far to initiate
+        if self._state == "INIT" and np.linalg.norm(np.array(gs.ball.pos) - np.array(gs.car.pos)) > 2000:
+            return True
 
-__all__ = ["DoubleTapParams", "DoubleTapMechanic"]
-
+        return False

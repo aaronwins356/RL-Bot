@@ -1,31 +1,13 @@
+log_level: INFO
+enable_gui: false
+telemetry_csv: "runs/telemetry.csv"
+aggression: 0.6
+mechanics:
+  aerial: true
+  air_dribble: true
+  ceiling: true
+  flip_reset: true
+  double_tap: true
 planner:
-  # Mechanic enable/disable flags
-  mechanics:
-    aerial: true
-    flip_reset: true
-    ceiling: true
-    double_tap: true
-    air_dribble: true
-    
-  # Aggression settings (0-1)
-  aggression:
-    base_level: 0.7
-    boost_threshold: 0.3  # Minimum boost to attempt aggressive plays
-    pressure_sensitivity: 0.5  # How much to back off under pressure
-    
-  # Shot selection thresholds
-  shot:
-    min_angle_to_goal: 30.0  # degrees
-    min_shot_speed: 50.0  # uu/s
-    min_shot_probability: 0.4
-    
-  # Recovery settings
-  recovery:
-    max_recovery_time: 2.0  # seconds
-    boost_save_threshold: 0.2  # Save this much boost for recovery
-
-  # Safety fallbacks
-  safety:
-    enable_defensive_rotation: true
-    min_boost_for_offense: 0.25
-    max_overcommit_time: 3.0  # seconds
+  pressure_level: 0.5
+  safety_bias: 0.4

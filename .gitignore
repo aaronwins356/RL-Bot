@@ -1,7 +1,30 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.py[cod]
-.mypy_cache/
+*.pyc
+*.pyd
+*.pyo
+*.egg-info/
 .pytest_cache/
 .ruff_cache/
-*.egg-info/
+
+# Virtual environment
 .venv/
+venv/
+env/
+
+# IDE-specific files
+.vscode/
+.idea/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+
+# Logs and telemetry
+*.log
+runs/
+reports/last_run/

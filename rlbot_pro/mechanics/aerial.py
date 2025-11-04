@@ -1,136 +1,168 @@
-"""Deterministic aerial controller with PD orientation and boost gating."""
+from dataclasses import dataclass, field
+from typing import Optional
 
-from __future__ import annotations
+import numpy as np
 
-from dataclasses import dataclass
+from rlbot_pro.control import Controls
+from rlbot_pro.math3d import vec3, normalize, dot, angle_between, clamp
+from rlbot_pro.physics_helpers import (
+    GRAVITY,
+    CAR_MAX_SPEED,
+    BOOST_ACCELERATION,
+    constant_acceleration_kinematics,
+)
+from rlbot_pro.sensing import (
+    get_car_forward_vector,
+    get_car_up_vector,
+    predict_ball_pos_at_time,
+)
+from rlbot_pro.state import GameState, Vector
+from rlbot_pro.mechanics import Mechanic, get_pitch_yaw_roll
 
-from ..control import Controls
-from ..math3d import Vector3, clamp, dot, magnitude, normalize, subtract
-from ..physics_helpers import estimate_required_speed
-from ..state import GameState
 
-
-@dataclass(frozen=True)
+@dataclass
 class AerialParams:
-    """Parameters for guiding an aerial intercept."""
+    """Parameters for the Aerial mechanic."""
 
-    intercept: Vector3
-    arrival_time: float
-    orientation_kp: float = 2.4
-    orientation_kd: float = 0.35
-    boost_alignment_threshold: float = 0.6
-    minimum_distance: float = 85.0
+    target_pos: Vector = (0.0, 0.0, 0.0)
+    target_time: float = 0.0
+    # How much boost to use for alignment vs. speed
+    alignment_boost_threshold: float = 0.8
+    # Max angle off target to still consider boosting for alignment
+    max_alignment_angle: float = np.deg2rad(15)
 
 
-class AerialMechanic:
-    """PD-based aerial controller that converges on a target point."""
+@dataclass
+class Aerial(Mechanic):
+    """
+    Executes an aerial maneuver to intercept the ball.
+    PD orientation to a moving intercept point; boost gating by alignment.
+    """
 
-    def __init__(self, params: AerialParams) -> None:
-        self.params = params
-        self._prepared = False
-        self._jump_issued = False
-        self._target_direction = Vector3(0.0, 0.0, 1.0)
-        self._time_remaining = params.arrival_time
-        self._complete = False
-        self._invalid = False
+    params: AerialParams = field(default_factory=AerialParams)
+    _target_intercept_pos: Optional[np.ndarray] = None
+    _target_intercept_time: Optional[float] = None
+    _start_time: float = 0.0
 
-    def prep(self, state: GameState) -> None:
-        car_to_target = subtract(self.params.intercept, state.car.position)
-        distance = magnitude(car_to_target)
-        self._target_direction = normalize(car_to_target)
-        self._time_remaining = self.params.arrival_time
-        self._jump_issued = not state.car.on_ground
-        self._prepared = True
-        self._complete = distance <= self.params.minimum_distance
-        self._invalid = state.car.is_demolished
+    def prep(self, gs: GameState, **kwargs) -> None:
+        """
+        Initializes the aerial mechanic by predicting an intercept point.
+        Requires 'target_pos' and 'target_time' in kwargs for initial target.
+        """
+        self._start_time = gs.car.time
+        self.params.target_pos = kwargs.get("target_pos", self.params.target_pos)
+        self.params.target_time = kwargs.get("target_time", self.params.target_time)
 
-    def _forward(self, state: GameState) -> Vector3:
-        forward = normalize(state.car.forward)
-        if magnitude(forward) <= 1e-5:
-            velocity_dir = normalize(state.car.velocity)
-            if magnitude(velocity_dir) <= 1e-5:
-                return Vector3(1.0, 0.0, 0.0)
-            return velocity_dir
-        return forward
+        # Predict ball position at target time
+        predicted_ball_pos = predict_ball_pos_at_time(gs.ball, self.params.target_time)
+        self._target_intercept_pos = predicted_ball_pos
+        self._target_intercept_time = gs.car.time + self.params.target_time
 
-    def step(self, state: GameState, dt: float = 1.0 / 60.0) -> Controls:
-        if not self._prepared:
-            self.prep(state)
-        if self._invalid:
-            return Controls(0.0, 0.0, 0.0, 0.0, 0.0, False, False, False)
+    def step(self, gs: GameState, **kwargs) -> Controls:
+        """
+        Calculates controls to orient the car towards the intercept point and boost.
+        """
+        controls = Controls()
+        car_pos = np.array(gs.car.pos)
+        car_vel = np.array(gs.car.vel)
+        car_forward = get_car_forward_vector(gs.car)
+        car_up = get_car_up_vector(gs.car)
 
-        car_to_target = subtract(self.params.intercept, state.car.position)
-        distance = magnitude(car_to_target)
-        direction = normalize(car_to_target)
-        forward = self._forward(state)
-        alignment = dot(forward, direction)
+        if self._target_intercept_pos is None or self._target_intercept_time is None:
+            # Fallback if prep wasn't called or failed
+            self.prep(gs, **kwargs)
+            if self._target_intercept_pos is None:
+                return controls  # Still no target, return empty controls
 
-        pitch_error = direction.z - forward.z
-        yaw_error = direction.y - forward.y
-        roll_error = direction.x - forward.x
+        target_pos = self._target_intercept_pos
+        time_remaining = self._target_intercept_time - gs.car.time
 
-        pitch = clamp(
-            -pitch_error * self.params.orientation_kp
-            - state.car.angular_velocity.y * self.params.orientation_kd,
-            -1.0,
-            1.0,
+        if time_remaining <= 0.05:  # Very close to intercept time
+            # Try to hit the ball
+            target_direction = normalize(target_pos - car_pos)
+            pitch, yaw, roll = get_pitch_yaw_roll(
+                car_forward, car_up, target_direction, vec3(0, 0, 1)
+            )
+            controls = Controls(
+                pitch=clamp(pitch * 3, -1.0, 1.0),
+                yaw=clamp(yaw * 3, -1.0, 1.0),
+                roll=clamp(roll * 3, -1.0, 1.0),
+                boost=True,
+            )
+            return controls
+
+        # Calculate required acceleration to reach target
+        # s = v0*t + 0.5*a*t^2  =>  a = 2 * (s - v0*t) / t^2
+        displacement = target_pos - car_pos
+        required_accel = (
+            2 * (displacement - car_vel * time_remaining) / (time_remaining**2 + 1e-6)
         )
-        yaw = clamp(
-            yaw_error * self.params.orientation_kp
-            - state.car.angular_velocity.z * self.params.orientation_kd,
-            -1.0,
-            1.0,
-        )
-        roll = clamp(
-            -roll_error * (self.params.orientation_kp * 0.5)
-            - state.car.angular_velocity.x * self.params.orientation_kd,
-            -1.0,
-            1.0,
-        )
+        target_vel = car_vel + required_accel * time_remaining
 
-        relative_speed = dot(state.car.velocity, direction)
-        required_speed = estimate_required_speed(distance, max(self._time_remaining, 1e-2))
-        throttle = clamp((required_speed - relative_speed) / 500.0, 0.0, 1.0)
+        # Target direction is towards the required velocity
+        target_direction = normalize(target_vel - car_vel)
 
-        boost = (
-            alignment >= self.params.boost_alignment_threshold
-            and state.car.boost > 1.0
-            and distance > self.params.minimum_distance
-        )
-
-        jump = False
-        if state.car.on_ground and not self._jump_issued and distance > 120.0:
-            jump = True
-            self._jump_issued = True
-
-        self._time_remaining = max(0.0, self._time_remaining - dt)
-        self._complete = distance <= self.params.minimum_distance and alignment > 0.92
-        self._invalid = (
-            state.car.is_demolished
-            or (self._time_remaining <= 0.0 and distance > self.params.minimum_distance * 2.0)
+        # PD controller for orientation
+        pitch, yaw, roll = get_pitch_yaw_roll(
+            car_forward, car_up, target_direction, vec3(0, 0, 1)
         )
 
-        return Controls(
-            throttle=throttle,
-            steer=yaw,
-            pitch=pitch,
-            yaw=yaw,
-            roll=roll,
-            boost=boost,
-            jump=jump,
-            handbrake=False,
+        # Boost gating by alignment
+        angle_to_target = angle_between(car_forward, target_direction)
+        should_boost = (
+            gs.car.boost > 0
+            and angle_to_target < self.params.max_alignment_angle
+            and np.linalg.norm(car_vel) < CAR_MAX_SPEED
         )
 
-    def is_complete(self, state: GameState) -> bool:
-        if not self._prepared:
-            self.prep(state)
-        return self._complete
+        controls = Controls(
+            pitch=clamp(pitch * 3, -1.0, 1.0),  # Proportional control
+            yaw=clamp(yaw * 3, -1.0, 1.0),
+            roll=clamp(roll * 3, -1.0, 1.0),
+            boost=should_boost,
+            jump=False,  # Only jump to initiate aerial, not during
+        )
 
-    def is_invalid(self, state: GameState) -> bool:
-        if not self._prepared:
-            self.prep(state)
-        return self._invalid
+        return controls
 
+    def is_complete(self, gs: GameState) -> bool:
+        """
+        The aerial is complete if the car has passed the intercept point
+        or if the ball is significantly far from the intercept point.
+        """
+        if self._target_intercept_pos is None or self._target_intercept_time is None:
+            return True  # Invalid state, consider complete
 
-__all__ = ["AerialParams", "AerialMechanic"]
+        car_pos = np.array(gs.car.pos)
+        ball_pos = np.array(gs.ball.pos)
 
+        # Check if car has passed the intercept point (in the direction of travel)
+        if dot(car_pos - self._target_intercept_pos, normalize(np.array(gs.car.vel))) > 0:
+            return True
+
+        # Check if ball is far from predicted intercept point
+        predicted_ball_at_intercept = predict_ball_pos_at_time(
+            gs.ball, self._target_intercept_time - gs.car.time
+        )
+        if np.linalg.norm(predicted_ball_at_intercept - self._target_intercept_pos) > 200:
+            return True  # Ball deviated too much
+
+        return False
+
+    def is_invalid(self, gs: GameState) -> bool:
+        """
+        The aerial is invalid if the car runs out of boost,
+        or if the target intercept time has passed significantly.
+        """
+        if self._target_intercept_time is None:
+            return True
+
+        # If car runs out of boost and is not already aligned
+        if gs.car.boost == 0 and (self._target_intercept_time - gs.car.time) > 0.5:
+            return True
+
+        # If target time has passed and we haven't hit the ball
+        if gs.car.time > self._target_intercept_time + 0.5:
+            return True
+
+        return False

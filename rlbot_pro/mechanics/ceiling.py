@@ -1,124 +1,213 @@
-"""Deterministic ceiling shot state machine."""
+from dataclasses import dataclass, field
+from typing import Optional
 
-from __future__ import annotations
+import numpy as np
 
-from dataclasses import dataclass
+from rlbot_pro.control import Controls
+from rlbot_pro.math3d import vec3, normalize, dot, angle_between, clamp
+from rlbot_pro.physics_helpers import (
+    GRAVITY,
+    CAR_MAX_SPEED,
+    BOOST_ACCELERATION,
+    constant_acceleration_kinematics,
+)
+from rlbot_pro.sensing import (
+    get_car_forward_vector,
+    get_car_up_vector,
+    predict_ball_pos_at_time,
+    is_car_on_ceiling,
+    is_car_on_wall,
+)
+from rlbot_pro.state import GameState, Vector
+from rlbot_pro.mechanics import Mechanic, get_pitch_yaw_roll
 
-from ..control import Controls
-from ..math3d import Vector3, clamp, dot, magnitude, normalize, subtract
-from ..state import GameState
+
+@dataclass
+class CeilingParams:
+    """Parameters for the Ceiling mechanic."""
+
+    # Desired time to detach from the ceiling after wall carry
+    detach_time_offset: float = 0.5
+    # Target position for the first touch after detaching
+    first_touch_target: Vector = (0.0, 0.0, 0.0)
+    # How close to the ball to consider it a "carry" on the wall
+    wall_carry_distance: float = 200.0
 
 
-@dataclass(frozen=True)
-class CeilingShotParams:
-    """Configuration for executing a ceiling shot."""
+@dataclass
+class Ceiling(Mechanic):
+    """
+    Executes a ceiling shot setup.
+    Wall carry -> ceiling detach with timing param -> handoff point.
+    """
 
-    carry_target: Vector3
-    detach_height: float
-    detach_time: float
-    flip_window: tuple[float, float]
-    approach_gain: float = 1.2
+    params: CeilingParams = field(default_factory=CeilingParams)
+    _state: str = "INIT"  # INIT, WALL_CARRY, CEILING_DETACH, FIRST_TOUCH
+    _wall_carry_start_time: float = 0.0
+    _detach_target_time: float = 0.0
+    _first_touch_target_pos: Optional[np.ndarray] = None
 
+    def prep(self, gs: GameState, **kwargs) -> None:
+        """
+        Initializes the ceiling shot mechanic.
+        """
+        self._state = "INIT"
+        self._wall_carry_start_time = 0.0
+        self._detach_target_time = 0.0
+        self._first_touch_target_pos = None
+        self.params.first_touch_target = kwargs.get(
+            "first_touch_target", self.params.first_touch_target
+        )
 
-class CeilingShotMechanic:
-    """Carry the ball up the wall, detach from the ceiling, then flip."""
+    def step(self, gs: GameState, **kwargs) -> Controls:
+        """
+        Calculates controls based on the current state of the ceiling shot.
+        """
+        controls = Controls()
+        car_pos = np.array(gs.car.pos)
+        car_vel = np.array(gs.car.vel)
+        car_forward = get_car_forward_vector(gs.car)
+        car_up = get_car_up_vector(gs.car)
+        ball_pos = np.array(gs.ball.pos)
+        ball_vel = np.array(gs.ball.vel)
 
-    def __init__(self, params: CeilingShotParams) -> None:
-        self.params = params
-        self._prepared = False
-        self._elapsed = 0.0
-        self._phase = "carry"
-        self._flip_issued = False
-        self._detached_at = 0.0
-        self._complete = False
-        self._invalid = False
-
-    def prep(self, state: GameState) -> None:
-        self._prepared = True
-        self._elapsed = 0.0
-        self._phase = "carry"
-        self._flip_issued = False
-        self._detached_at = 0.0
-        self._complete = False
-        self._invalid = state.car.is_demolished
-
-    def _approach_wall(self, state: GameState) -> Controls:
-        to_target = subtract(self.params.carry_target, state.car.position)
-        direction = normalize(to_target)
-        forward = normalize(state.car.forward)
-        pitch_error = direction.z - forward.z
-        yaw_error = direction.y - forward.y
-        throttle = clamp(magnitude(to_target) / 1500.0, 0.2, 1.0)
-        pitch = clamp(-pitch_error * self.params.approach_gain, -1.0, 1.0)
-        yaw = clamp(yaw_error * self.params.approach_gain, -1.0, 1.0)
-        roll = 0.0
-        jump = state.car.on_ground and to_target.z > 200.0 and state.car.has_jump
-        boost = dot(forward, direction) > 0.7 and state.car.boost > 10.0
-        return Controls(throttle, yaw, pitch, yaw, roll, boost, jump, False)
-
-    def _detach(self, state: GameState) -> Controls:
-        forward = normalize(state.car.forward)
-        throttle = 0.2
-        pitch = clamp(-forward.z * 1.5, -1.0, 1.0)
-        yaw = 0.0
-        roll = 0.0
-        boost = False
-        jump = False
-        return Controls(throttle, yaw, pitch, yaw, roll, boost, jump, False)
-
-    def _flip(self) -> Controls:
-        self._flip_issued = True
-        return Controls(throttle=0.0, steer=0.0, pitch=-1.0, yaw=0.0, roll=0.0, boost=False, jump=True, handbrake=False)
-
-    def step(self, state: GameState, dt: float = 1.0 / 60.0) -> Controls:
-        if not self._prepared:
-            self.prep(state)
-        if self._invalid:
-            return Controls(0.0, 0.0, 0.0, 0.0, 0.0, False, False, False)
-
-        self._elapsed += dt
-        controls = Controls(0.0, 0.0, 0.0, 0.0, 0.0, False, False, False)
-
-        if self._phase == "carry":
-            controls = self._approach_wall(state)
-            if state.car.position.z >= self.params.detach_height or self._elapsed >= self.params.detach_time:
-                self._phase = "detach"
-                self._detached_at = self._elapsed
-        elif self._phase == "detach":
-            controls = self._detach(state)
-            if self._elapsed - self._detached_at >= 0.1:
-                self._phase = "flip"
-        elif self._phase == "flip":
-            window_start, window_end = self.params.flip_window
-            time_since_detach = self._elapsed - self._detached_at
-            allowance = dt * 0.5
-            if not self._flip_issued and window_start <= time_since_detach <= window_end + allowance:
-                controls = self._flip()
-            elif time_since_detach > window_end + allowance and not self._flip_issued:
-                self._invalid = True
+        if self._state == "INIT":
+            # Look for opportunities to start a wall carry
+            if is_car_on_wall(gs.car) and np.linalg.norm(ball_pos - car_pos) < self.params.wall_carry_distance:
+                self._state = "WALL_CARRY"
+                self._wall_carry_start_time = gs.car.time
+                self._first_touch_target_pos = np.array(self.params.first_touch_target)
+                self._detach_target_time = gs.car.time + self.params.detach_time_offset
+                # Drive up the wall towards the ball
+                target_direction = normalize(ball_pos - car_pos)
+                pitch, yaw, roll = get_pitch_yaw_roll(
+                    car_forward, car_up, target_direction, vec3(0, 0, 1)
+                )
+                controls = Controls(
+                    throttle=1.0,
+                    boost=True,
+                    pitch=clamp(pitch * 3, -1.0, 1.0),
+                    yaw=clamp(yaw * 3, -1.0, 1.0),
+                    roll=clamp(roll * 3, -1.0, 1.0),
+                )
             else:
-                controls = Controls(0.3, 0.0, -0.3, 0.0, 0.0, False, False, False)
-            if self._flip_issued:
-                self._phase = "complete"
-        else:
-            controls = Controls(0.4, 0.0, -0.2, 0.0, 0.0, False, False, False)
+                # If not ready, just drive towards the ball
+                target_direction = normalize(ball_pos - car_pos)
+                pitch, yaw, roll = get_pitch_yaw_roll(
+                    car_forward, car_up, target_direction, vec3(0, 0, 1)
+                )
+                controls = Controls(
+                    throttle=1.0,
+                    boost=True,
+                    pitch=clamp(pitch * 3, -1.0, 1.0),
+                    yaw=clamp(yaw * 3, -1.0, 1.0),
+                    roll=clamp(roll * 3, -1.0, 1.0),
+                )
 
-        self._complete = self._phase == "complete"
-        if state.car.on_ground and self._phase != "carry":
-            self._invalid = True
+        elif self._state == "WALL_CARRY":
+            # Maintain wall carry until detach time
+            if gs.car.time < self._detach_target_time:
+                # Continue driving up the wall, maintaining proximity to ball
+                target_direction = normalize(ball_pos - car_pos)
+                pitch, yaw, roll = get_pitch_yaw_roll(
+                    car_forward, car_up, target_direction, vec3(0, 0, 1)
+                )
+                controls = Controls(
+                    throttle=1.0,
+                    boost=True,
+                    pitch=clamp(pitch * 3, -1.0, 1.0),
+                    yaw=clamp(yaw * 3, -1.0, 1.0),
+                    roll=clamp(roll * 3, -1.0, 1.0),
+                )
+            else:
+                # Time to detach
+                self._state = "CEILING_DETACH"
+                # Jump off the ceiling
+                controls = Controls(jump=True)
+
+        elif self._state == "CEILING_DETACH":
+            # After detaching, orient towards the first touch target
+            if not gs.car.on_ground: # Still in air
+                if self._first_touch_target_pos is not None:
+                    target_direction = normalize(self._first_touch_target_pos - car_pos)
+                    pitch, yaw, roll = get_pitch_yaw_roll(
+                        car_forward, car_up, target_direction, vec3(0, 0, 1)
+                    )
+                    controls = Controls(
+                        pitch=clamp(pitch * 3, -1.0, 1.0),
+                        yaw=clamp(yaw * 3, -1.0, 1.0),
+                        roll=clamp(roll * 3, -1.0, 1.0),
+                        boost=True,
+                    )
+                else:
+                    # Fallback: just try to recover
+                    controls = Controls(pitch=1.0) # Nose down to recover
+            else:
+                # Landed, transition to first touch
+                self._state = "FIRST_TOUCH"
+
+        elif self._state == "FIRST_TOUCH":
+            # Drive towards the first touch target
+            if self._first_touch_target_pos is not None:
+                target_direction = normalize(self._first_touch_target_pos - car_pos)
+                pitch, yaw, roll = get_pitch_yaw_roll(
+                    car_forward, car_up, target_direction, vec3(0, 0, 1)
+                )
+                controls = Controls(
+                    throttle=1.0,
+                    boost=True,
+                    pitch=clamp(pitch * 3, -1.0, 1.0),
+                    yaw=clamp(yaw * 3, -1.0, 1.0),
+                    roll=clamp(roll * 3, -1.0, 1.0),
+                )
+            else:
+                # Fallback: just drive towards ball
+                target_direction = normalize(ball_pos - car_pos)
+                pitch, yaw, roll = get_pitch_yaw_roll(
+                    car_forward, car_up, target_direction, vec3(0, 0, 1)
+                )
+                controls = Controls(
+                    throttle=1.0,
+                    boost=True,
+                    pitch=clamp(pitch * 3, -1.0, 1.0),
+                    yaw=clamp(yaw * 3, -1.0, 1.0),
+                    roll=clamp(roll * 3, -1.0, 1.0),
+                )
 
         return controls
 
-    def is_complete(self, state: GameState) -> bool:
-        if not self._prepared:
-            self.prep(state)
-        return self._complete
+    def is_complete(self, gs: GameState) -> bool:
+        """
+        The ceiling shot is complete if the car has made the first touch
+        or if the ball is too far away.
+        """
+        if self._state == "FIRST_TOUCH":
+            # Check if car is close to the first touch target
+            if self._first_touch_target_pos is not None:
+                if np.linalg.norm(np.array(gs.car.pos) - self._first_touch_target_pos) < 150:
+                    return True
+            # Also check if ball is hit
+            if np.linalg.norm(np.array(gs.ball.vel)) > 1000: # Ball has been hit hard
+                return True
+        
+        # If ball is too far from car after initial setup
+        if np.linalg.norm(np.array(gs.ball.pos) - np.array(gs.car.pos)) > 1500 and self._state != "INIT":
+            return True
 
-    def is_invalid(self, state: GameState) -> bool:
-        if not self._prepared:
-            self.prep(state)
-        return self._invalid
+        return False
 
+    def is_invalid(self, gs: GameState) -> bool:
+        """
+        The ceiling shot is invalid if the car loses the ball during wall carry,
+        or if the car is not on the wall/ceiling when it should be.
+        """
+        if self._state == "WALL_CARRY" and not is_car_on_wall(gs.car):
+            return True
+        if self._state == "CEILING_DETACH" and gs.car.on_ground:
+            return True # Should be in air after detach
+        
+        # If ball gets too far during wall carry
+        if self._state == "WALL_CARRY" and np.linalg.norm(np.array(gs.ball.pos) - np.array(gs.car.pos)) > self.params.wall_carry_distance * 2:
+            return True
 
-__all__ = ["CeilingShotParams", "CeilingShotMechanic"]
-
+        return False

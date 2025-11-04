@@ -1,58 +1,56 @@
-[build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "rlbot-pro"
+name = "rlbot_pro"
 version = "0.1.0"
-description = "Deterministic Rocket League bot scaffolding"
-authors = [{name = "RL Bot Engineers"}]
-readme = "README.md"
-requires-python = ">=3.10"
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3 :: Only",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
+description = "A production-ready Rocket League bot foundation with pro-style mechanics."
+authors = [
+    { name = "Sixth", email = "sixth@example.com" },
 ]
-dependencies = []
+dependencies = [
+    "numpy==1.26.4",
+    "pydantic==2.7.1",
+    "PyYAML==6.0.1",
+    "matplotlib==3.9.0",
+    "rlbot==1.26.0", # Optional, for main.py
+]
+requires-python = ">=3.11"
+readme = "README.md"
+license = { file = "LICENSE" }
 
 [project.optional-dependencies]
 dev = [
-    "black==24.8.0",
-    "ruff==0.5.6",
-    "mypy==1.11.1",
-    "pytest==8.3.2",
+    "pytest==8.2.1",
+    "mypy==1.10.0",
+    "ruff==0.4.4",
+    "black==24.4.2",
+    "stable-baselines3==2.3.0", # For training stub
+    "tensorboard==2.16.2", # Optional for training
 ]
 
-[project.scripts]
-rlbot-pro = "cli:main"
-
-[tool.black]
-line-length = 88
-target-version = ["py310"]
-
-[tool.ruff]
-extend-exclude = ["core", "gui", "telemetry.py", "bot_manager.py", "controls_panel.py", "main.py"]
-line-length = 88
-
-[tool.ruff.lint]
-per-file-ignores = {"tests/*" = ["D100", "D101", "D102", "D103", "D104", "ANN201"], "cli.py" = ["D100"]}
-select = ["E", "F", "I", "B", "UP", "ANN", "D"]
-ignore = ["D104", "D105", "D107"]
-
-[tool.ruff.lint.pydocstyle]
-convention = "google"
-
-[tool.mypy]
-python_version = "3.10"
-strict = true
-warn_unused_configs = true
-ignore_missing_imports = false
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-q"
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["rlbot_pro*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+addopts = "--strict-markers"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true # Some libs might not have full type hints
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "W", "I", "N", "D", "UP", "ANN", "ASYNC", "B", "C", "G", "PIE", "TID", "PERF", "RUF"]
+ignore = ["ANN101", "ANN102", "ANN401"] # Ignore self/cls type hints, Any type, and some common ones
+
+[tool.ruff.per-file-ignores]
+"training/train.py" = ["E402"] # Allow imports at different places for gated imports
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]

@@ -1,131 +1,161 @@
-"""Air-dribble mechanic with touch planning and deterministic corrections."""
+from dataclasses import dataclass, field
+from typing import Optional
 
-from __future__ import annotations
+import numpy as np
 
-from dataclasses import dataclass
-
-from ..control import Controls
-from ..math3d import (
-    Vector3,
-    clamp,
-    dot,
-    magnitude,
-    normalize,
-    subtract,
+from rlbot_pro.control import Controls
+from rlbot_pro.math3d import vec3, normalize, dot, angle_between, clamp
+from rlbot_pro.physics_helpers import (
+    GRAVITY,
+    CAR_MAX_SPEED,
+    BOOST_ACCELERATION,
+    constant_acceleration_kinematics,
 )
-from ..physics_helpers import estimate_required_speed
-from ..state import GameState
+from rlbot_pro.sensing import (
+    get_car_forward_vector,
+    get_car_up_vector,
+    predict_ball_pos_at_time,
+    get_car_local_coords,
+)
+from rlbot_pro.state import GameState, Vector
+from rlbot_pro.mechanics import Mechanic, get_pitch_yaw_roll
 
 
-@dataclass(frozen=True)
+@dataclass
 class AirDribbleParams:
-    """Parameters describing the desired air dribble."""
+    """Parameters for the Air Dribble mechanic."""
 
-    carry_offset: Vector3
-    target_velocity: float
-    alignment_threshold: float = 0.65
-    lateral_gain: float = 0.75
-    vertical_gain: float = 0.8
-    derivative_gain: float = 0.15
-    minimum_boost: float = 5.0
+    # Desired offset from the ball (e.g., slightly behind and below)
+    offset: Vector = (0.0, -100.0, -50.0)
+    # Desired ball velocity to maintain
+    target_ball_vel: Vector = (0.0, 1000.0, 0.0)
+    # How close to the ball before making a touch
+    touch_distance: float = 100.0
+    # Max angle off target to still consider boosting for alignment
+    max_alignment_angle: float = np.deg2rad(10)
 
 
-class AirDribbleMechanic:
-    """Maintain control of the ball in the air through smooth corrections."""
+@dataclass
+class AirDribble(Mechanic):
+    """
+    Executes an air dribble maneuver.
+    Maintain offset and target ball velocity; small impulse touches.
+    """
 
-    def __init__(self, params: AirDribbleParams) -> None:
-        self.params = params
-        self._prepared = False
-        self._last_error = Vector3(0.0, 0.0, 0.0)
-        self._complete = False
-        self._invalid = False
+    params: AirDribbleParams = field(default_factory=AirDribbleParams)
+    _is_dribbling: bool = False
+    _last_touch_time: float = 0.0
+    _dribble_start_time: float = 0.0
 
-    def prep(self, state: GameState) -> None:
-        self._prepared = True
-        self._last_error = self._compute_error(state)
-        self._complete = False
-        self._invalid = state.car.is_demolished
+    def prep(self, gs: GameState, **kwargs) -> None:
+        """
+        Initializes the air dribble mechanic.
+        """
+        self._dribble_start_time = gs.car.time
+        self._is_dribbling = False
+        self._last_touch_time = 0.0
 
-    def _compute_error(self, state: GameState) -> Vector3:
-        desired_touch = subtract(state.ball.position, self.params.carry_offset)
-        return subtract(desired_touch, state.car.position)
+    def step(self, gs: GameState, **kwargs) -> Controls:
+        """
+        Calculates controls to maintain position relative to the ball and make touches.
+        """
+        controls = Controls()
+        car_pos = np.array(gs.car.pos)
+        car_vel = np.array(gs.car.vel)
+        car_forward = get_car_forward_vector(gs.car)
+        car_up = get_car_up_vector(gs.car)
+        ball_pos = np.array(gs.ball.pos)
+        ball_vel = np.array(gs.ball.vel)
 
-    def _forward(self, state: GameState) -> Vector3:
-        forward = normalize(state.car.forward)
-        if magnitude(forward) <= 1e-5:
-            return Vector3(1.0, 0.0, 0.0)
-        return forward
+        # Calculate desired car position relative to the ball
+        # Rotate offset by ball's current direction of travel (simplified)
+        # For a true air dribble, this would be more complex, considering car orientation
+        # For now, assume target_ball_vel defines the "forward" for the dribble
+        dribble_forward = normalize(np.array(self.params.target_ball_vel))
+        # Simple rotation of offset to align with dribble_forward
+        # This is a very basic approximation and would need a proper rotation matrix
+        # if the offset was not primarily along one axis.
+        # For (0, -100, -50) offset, if dribble_forward is (0,1,0), no change.
+        # If dribble_forward is (1,0,0), offset becomes (-100, 0, -50)
+        # A more robust solution would involve a rotation matrix from (0,1,0) to dribble_forward
+        
+        # For simplicity, let's just add the offset directly to the ball's position
+        # and let the orientation logic handle the rest.
+        target_car_pos = ball_pos + np.array(self.params.offset)
 
-    def step(self, state: GameState, dt: float = 1.0 / 60.0) -> Controls:
-        if not self._prepared:
-            self.prep(state)
-        if self._invalid:
-            return Controls(0.0, 0.0, 0.0, 0.0, 0.0, False, False, False)
+        # Calculate target car velocity to match ball velocity
+        target_car_vel = np.array(self.params.target_ball_vel)
 
-        error = self._compute_error(state)
-        error_rate = Vector3(
-            (error.x - self._last_error.x) / max(dt, 1e-3),
-            (error.y - self._last_error.y) / max(dt, 1e-3),
-            (error.z - self._last_error.z) / max(dt, 1e-3),
-        )
-        self._last_error = error
+        # Calculate required acceleration to reach target car velocity
+        # a = (v_target - v_current) / dt
+        accel_needed = (target_car_vel - car_vel) / (gs.dt + 1e-6)
+        
+        # Target direction for car orientation
+        # Aim slightly ahead of the ball to push it, or towards target_car_pos
+        target_direction = normalize(target_car_pos - car_pos)
 
-        forward = self._forward(state)
-        ball_direction = normalize(subtract(state.ball.position, state.car.position))
-        alignment = dot(forward, ball_direction)
-
-        throttle_speed = estimate_required_speed(magnitude(error), 0.8)
-        throttle = clamp((throttle_speed - dot(state.car.velocity, forward)) / 600.0, 0.0, 1.0)
-        steer = clamp(
-            (error.y * self.params.lateral_gain) + error_rate.y * self.params.derivative_gain,
-            -1.0,
-            1.0,
-        )
-        pitch = clamp(
-            (-error.z * self.params.vertical_gain) - error_rate.z * self.params.derivative_gain,
-            -1.0,
-            1.0,
-        )
-
-        boost = (
-            alignment > self.params.alignment_threshold
-            and state.car.boost > self.params.minimum_boost
-            and self.params.target_velocity > 1300.0
-        )
-
-        jump = False
-        if state.car.on_ground and state.car.has_jump:
-            vertical_gap = state.ball.position.z - state.car.position.z
-            if vertical_gap > 200.0 or abs(error.z) < 150.0:
-                jump = True
-
-        self._complete = (
-            magnitude(error) < 120.0
-            and state.ball.position.z > state.car.position.z + self.params.carry_offset.z * 0.5
-        )
-        self._invalid = state.car.boost <= 0.5 and alignment < 0.0
-
-        return Controls(
-            throttle=throttle,
-            steer=steer,
-            pitch=pitch,
-            yaw=steer,
-            roll=0.0,
-            boost=boost,
-            jump=jump,
-            handbrake=False,
+        pitch, yaw, roll = get_pitch_yaw_roll(
+            car_forward, car_up, target_direction, vec3(0, 0, 1)
         )
 
-    def is_complete(self, state: GameState) -> bool:
-        if not self._prepared:
-            self.prep(state)
-        return self._complete
+        controls = Controls(
+            pitch=clamp(pitch * 3, -1.0, 1.0),
+            yaw=clamp(yaw * 3, -1.0, 1.0),
+            roll=clamp(roll * 3, -1.0, 1.0),
+            throttle=1.0, # Always try to maintain speed
+            boost=False,
+        )
 
-    def is_invalid(self, state: GameState) -> bool:
-        if not self._prepared:
-            self.prep(state)
-        return self._invalid
+        # Boost to match target velocity and maintain position
+        # Only boost if we are behind the ball and need to catch up or push
+        if dot(car_forward, normalize(ball_pos - car_pos)) > 0.5: # Car is generally facing the ball
+            if np.linalg.norm(car_vel) < np.linalg.norm(target_car_vel) * 0.95:
+                controls = controls._replace(boost=True)
+            
+            # Small impulse touches when close enough
+            dist_to_ball = np.linalg.norm(ball_pos - car_pos)
+            if dist_to_ball < self.params.touch_distance and (gs.car.time - self._last_touch_time > 0.1):
+                # Make a small jump to impart an impulse
+                controls = controls._replace(jump=True)
+                self._last_touch_time = gs.car.time
+                self._is_dribbling = True # Indicate we are actively dribbling
 
+        return controls
 
-__all__ = ["AirDribbleParams", "AirDribbleMechanic"]
+    def is_complete(self, gs: GameState) -> bool:
+        """
+        The air dribble is complete if the ball is too far from the car,
+        or if the ball has landed.
+        """
+        if not self._is_dribbling:
+            return False # Not yet started dribbling
 
+        car_pos = np.array(gs.car.pos)
+        ball_pos = np.array(gs.ball.pos)
+
+        # If ball is on the ground
+        if ball_pos[2] < 100: # Ball height threshold
+            return True
+        
+        # If car is too far from the ball
+        if np.linalg.norm(ball_pos - car_pos) > 500: # Distance threshold
+            return True
+
+        return False
+
+    def is_invalid(self, gs: GameState) -> bool:
+        """
+        The air dribble is invalid if the car is on the ground,
+        or if the ball is too far away to initiate/continue.
+        """
+        if gs.car.on_ground:
+            return True
+        
+        car_pos = np.array(gs.car.pos)
+        ball_pos = np.array(gs.ball.pos)
+
+        # If ball is too far to even start a dribble
+        if np.linalg.norm(ball_pos - car_pos) > 1000 and not self._is_dribbling:
+            return True
+
+        return False
