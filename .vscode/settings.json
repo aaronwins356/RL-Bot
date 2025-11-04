@@ -1,0 +1,18 @@
+{
+  "python.pythonPath": "${workspaceFolder}/.venv/bin/python",
+  "python.formatting.provider": "none",
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll": true,
+    "source.organizeImports": true
+  },
+  "black-formatter.args": ["--line-length", "100"],
+  "ruff.args": ["--line-length", "100"],
+  "mypy.runUsingActiveInterpreter": true,
+  "mypy.targetsAndArguments": [
+    {
+      "folder": "${workspaceFolder}",
+      "args": ["--strict"]
+    }
+  ]
+}

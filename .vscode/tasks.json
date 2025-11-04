@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "ruff",
+      "type": "shell",
+      "command": "ruff check .",
+      "problemMatcher": []
+    },
+    {
+      "label": "black",
+      "type": "shell",
+      "command": "black .",
+      "problemMatcher": []
+    },
+    {
+      "label": "mypy",
+      "type": "shell",
+      "command": "mypy .",
+      "problemMatcher": []
+    },
+    {
+      "label": "pytest",
+      "type": "shell",
+      "command": "pytest -q",
+      "problemMatcher": []
+    }
+  ]
+}

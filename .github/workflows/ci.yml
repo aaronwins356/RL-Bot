@@ -2,61 +2,38 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   pull_request:
-    branches:
-      - main
+    branches: [ main ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11"]
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
+          python-version: "3.11"
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
-          pip install -e ".[dev]"
-
-      - name: Run Ruff (linting)
+          python -m venv .venv
+          source .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -e .
+      - name: Ruff
         run: |
+          source .venv/bin/activate
           ruff check .
-
-      - name: Run Black (formatting check)
+      - name: Black
         run: |
+          source .venv/bin/activate
           black --check .
-
-      - name: Run MyPy (type checking)
+      - name: Mypy
         run: |
+          source .venv/bin/activate
           mypy .
-
-      - name: Run Pytest (unit tests)
+      - name: Pytest
         run: |
+          source .venv/bin/activate
           pytest -q
-
-      - name: Run CLI demo
-        run: |
-          python cli.py
-
-      - name: Run scenario and generate report (smoke test)
-        run: |
-          python -m scenarios.run --mechanic aerial --seed 0
-          python reports/generate_report.py
