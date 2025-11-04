@@ -12,3 +12,15 @@ mechanics:
 planner:
   pressure_level: 0.5
   safety_bias: 0.4
+bot:
+  name: WinYour1s
+  developer: aaronwins356
+  loadouts:
+    blue: appearance/loadout_blue.cfg
+    orange: appearance/loadout_orange.cfg
+tournament_seed: 777
+tournament:
+  enabled: true
+  max_style_risk: 0.25
+  pressure_level: 0.7
+  kickoff_variant: auto

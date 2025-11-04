@@ -87,15 +87,21 @@ def _vec_from(obj: VectorLike) -> Vector:
     return (float(obj.x), float(obj.y), float(obj.z))
 
 
-def packet_to_gamestate(packet: PacketLike) -> GameState:
+def packet_to_gamestate(packet: PacketLike, car_index: int = 0) -> GameState:
     ball = packet.game_ball
-    car = packet.game_cars[0]
+    cars = packet.game_cars
+    if not (0 <= car_index < len(cars)):
+        message = f"car_index {car_index} out of bounds for packet with {len(cars)} cars"
+        raise IndexError(message)
+    car = cars[car_index]
     ball_state = BallState(
         pos=_vec_from(ball.physics.location),
         vel=_vec_from(ball.physics.velocity),
     )
     rotation = car.physics.rotation
     forward = (float(rotation.pitch), float(rotation.yaw), float(rotation.roll))
+    game_info = packet.game_info
+    seconds_elapsed = getattr(game_info, "seconds_elapsed", 0.0) or 0.0
     car_state = CarState(
         pos=_vec_from(car.physics.location),
         vel=_vec_from(car.physics.velocity),
@@ -105,7 +111,7 @@ def packet_to_gamestate(packet: PacketLike) -> GameState:
         boost=float(car.boost),
         has_flip=bool(car.double_jumped),
         on_ground=bool(car.has_wheel_contact),
-        time=float(packet.game_info.seconds_elapsed or 0.0),
+        time=float(seconds_elapsed),
     )
     return GameState(ball=ball_state, car=car_state, dt=1.0 / 60.0)
 
@@ -145,6 +151,8 @@ def tick_loop(
     control_sender: ControlSender,
     tick_rate: float = 1.0 / 60.0,
     max_ticks: int | None = None,
+    *,
+    car_index: int = 0,
 ) -> None:
     if not RLBot_AVAILABLE:
         message = "rlbot package is required for tick_loop; install rlbot to continue"
@@ -152,7 +160,7 @@ def tick_loop(
     tick = 0
     while max_ticks is None or tick < max_ticks:
         packet = packet_provider()
-        gs = packet_to_gamestate(packet)
+        gs = packet_to_gamestate(packet, car_index=car_index)
         controls = agent_step(gs)
         simple = controls_to_simple_controller(controls)
         control_sender(_to_rlbot_controller(simple))

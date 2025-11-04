@@ -12,6 +12,10 @@ loggers:
     handlers: [console]
     level: INFO
     propagate: false
+  rlbot_agent:
+    handlers: [console]
+    level: INFO
+    propagate: false
 root:
   handlers: [console]
   level: INFO

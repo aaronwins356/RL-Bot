@@ -1,0 +1,5 @@
+Launch RLBot GUI and load this project:
+1. Activate the virtualenv with RLBot installed.
+2. Run `python -m rlbot.gui`.
+3. In the GUI select **Open rlbot.cfg** and choose ${workspaceFolder}/rlbot.cfg.
+4. Start the match.

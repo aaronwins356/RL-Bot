@@ -9,7 +9,7 @@ def main() -> None:
         print("RLBot is not installed. Install the 'rlbot' package to enable in-game control.")
         return
     ProStyleAgent.from_settings()
-    print("RLBot detected. Connect this agent using rlbot_pro.adapters.rlbot_adapter.tick_loop().")
+    print("RLBot detected. Launch the RLBot GUI and open rlbot.cfg to field WinYour1s.")
 
 
 if __name__ == "__main__":
