@@ -7,10 +7,21 @@ from enum import Enum, auto
 
 from ..control import Controls
 from ..math3d import Vector3
-from ..mechanics.aerial import AerialParams, aerial_step
-from ..mechanics.air_dribble import AirDribbleParams, air_dribble_step
-from ..mechanics.ceiling import CeilingShotParams, ceiling_shot_step
-from ..mechanics.flip_reset import FlipResetParams, flip_reset_step
+from ..mechanics import (
+    AerialMechanic,
+    AerialParams,
+    AirDribbleMechanic,
+    AirDribbleParams,
+    CeilingShotMechanic,
+    CeilingShotParams,
+    DoubleTapMechanic,
+    DoubleTapParams,
+    FlipResetMechanic,
+    FlipResetParams,
+    RecoveryMechanic,
+    RecoveryParams,
+    RecoveryType,
+)
 from ..sensing import time_to_ball_touch
 from ..state import GameState
 
@@ -23,6 +34,8 @@ class OptionType(Enum):
     AIR_DRIBBLE = auto()
     FLIP_RESET = auto()
     CEILING = auto()
+    DOUBLE_TAP = auto()
+    RECOVERY = auto()
 
 
 @dataclass(frozen=True)
@@ -41,6 +54,8 @@ def evaluate(state: GameState) -> OptionType:
         return OptionType.AIR_DRIBBLE
     if not state.car.on_ground and state.car.has_jump:
         return OptionType.FLIP_RESET
+    if state.ball.position.y > 4_500.0 and state.ball.velocity.y > 0.0:
+        return OptionType.DOUBLE_TAP
     is_ceiling_setup = (
         state.car.on_ground
         and state.ball.position.z < 200.0
@@ -48,39 +63,66 @@ def evaluate(state: GameState) -> OptionType:
     )
     if is_ceiling_setup:
         return OptionType.CEILING
+    if not state.car.on_ground and state.car.velocity.z < -300.0:
+        return OptionType.RECOVERY
     return OptionType.GROUND_DRIVE
 
 
 def execute(state: GameState, option_type: OptionType) -> Option:
     """Construct controls for the chosen option."""
     if option_type is OptionType.AERIAL:
-        aerial_params = AerialParams(
-            target=state.ball.position,
-            arrival_time=time_to_ball_touch(state),
+        mechanic = AerialMechanic(
+            AerialParams(
+                intercept=state.ball.position,
+                arrival_time=time_to_ball_touch(state),
+            )
         )
-        controls = aerial_step(state, aerial_params)
-        return Option(option_type, controls)
+        mechanic.prep(state)
+        return Option(option_type, mechanic.step(state))
     if option_type is OptionType.AIR_DRIBBLE:
-        dribble_params = AirDribbleParams(
-            carry_offset=Vector3(0.0, 0.0, 120.0),
-            target_velocity=1_500.0,
+        mechanic = AirDribbleMechanic(
+            AirDribbleParams(
+                carry_offset=Vector3(0.0, 0.0, 120.0),
+                target_velocity=1_500.0,
+            )
         )
-        controls = air_dribble_step(state, dribble_params)
-        return Option(option_type, controls)
+        mechanic.prep(state)
+        return Option(option_type, mechanic.step(state))
     if option_type is OptionType.FLIP_RESET:
-        flip_reset_params = FlipResetParams(
-            target_surface_normal=Vector3(0.0, 0.0, 1.0),
-            commit_time=time_to_ball_touch(state),
+        mechanic = FlipResetMechanic(
+            FlipResetParams(
+                target_surface_normal=Vector3(0.0, 0.0, 1.0),
+                commit_time=time_to_ball_touch(state),
+            )
         )
-        controls = flip_reset_step(state, flip_reset_params)
-        return Option(option_type, controls)
+        mechanic.prep(state)
+        return Option(option_type, mechanic.step(state))
     if option_type is OptionType.CEILING:
-        ceiling_params = CeilingShotParams(
-            drop_point=Vector3(state.ball.position.x, state.ball.position.y, 2_000.0),
-            release_time=time_to_ball_touch(state),
+        mechanic = CeilingShotMechanic(
+            CeilingShotParams(
+                carry_target=Vector3(state.ball.position.x, state.ball.position.y, 2_000.0),
+                detach_height=1_800.0,
+                detach_time=time_to_ball_touch(state),
+                flip_window=(0.15, 0.35),
+            )
         )
-        controls = ceiling_shot_step(state, ceiling_params)
-        return Option(option_type, controls)
+        mechanic.prep(state)
+        return Option(option_type, mechanic.step(state))
+    if option_type is OptionType.DOUBLE_TAP:
+        mechanic = DoubleTapMechanic(
+            DoubleTapParams(
+                backboard_y=5_120.0,
+                restitution=0.65,
+                first_touch_speed=1_600.0,
+                second_arrival_time=0.9,
+            )
+        )
+        mechanic.prep(state)
+        return Option(option_type, mechanic.step(state))
+    if option_type is OptionType.RECOVERY:
+        mechanic = RecoveryMechanic(RecoveryParams(strategy=RecoveryType.UPRIGHT))
+        mechanic.prep(state)
+        return Option(option_type, mechanic.step(state))
     controls = Controls(
         throttle=0.7,
         steer=0.0,

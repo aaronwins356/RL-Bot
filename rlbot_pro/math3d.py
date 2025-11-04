@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Iterator
 from dataclasses import dataclass
+from math import acos, sqrt
 
 
 @dataclass(frozen=True)
@@ -63,7 +63,7 @@ def cross(a: Vector3, b: Vector3) -> Vector3:
 
 def magnitude(vec: Vector3) -> float:
     """Return the magnitude of a vector."""
-    return math.sqrt(vec.x * vec.x + vec.y * vec.y + vec.z * vec.z)
+    return sqrt(vec.x * vec.x + vec.y * vec.y + vec.z * vec.z)
 
 
 def normalize(vec: Vector3) -> Vector3:
@@ -80,6 +80,32 @@ def clamp(value: float, minimum: float, maximum: float) -> float:
     return max(minimum, min(maximum, value))
 
 
+def distance(a: Vector3, b: Vector3) -> float:
+    """Return the Euclidean distance between two points."""
+    dx = a.x - b.x
+    dy = a.y - b.y
+    dz = a.z - b.z
+    return sqrt(dx * dx + dy * dy + dz * dz)
+
+
+def angle_between(a: Vector3, b: Vector3) -> float:
+    """Return the angle between two vectors in radians."""
+    mag_product = magnitude(a) * magnitude(b)
+    if mag_product <= 1e-9:
+        return 0.0
+    cos_theta = clamp(dot(a, b) / mag_product, -1.0, 1.0)
+    return acos(cos_theta)
+
+
+def lerp(a: Vector3, b: Vector3, alpha: float) -> Vector3:
+    """Linearly interpolate between two points."""
+    return Vector3(
+        a.x + (b.x - a.x) * alpha,
+        a.y + (b.y - a.y) * alpha,
+        a.z + (b.z - a.z) * alpha,
+    )
+
+
 __all__ = [
     "Vector3",
     "add",
@@ -90,4 +116,7 @@ __all__ = [
     "magnitude",
     "normalize",
     "clamp",
+    "distance",
+    "angle_between",
+    "lerp",
 ]

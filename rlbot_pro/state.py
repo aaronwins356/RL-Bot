@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .math3d import Vector3
 
@@ -25,6 +25,9 @@ class CarState:
     has_jump: bool
     is_demolished: bool
     on_ground: bool
+    forward: Vector3 = field(default_factory=lambda: Vector3(1.0, 0.0, 0.0))
+    up: Vector3 = field(default_factory=lambda: Vector3(0.0, 0.0, 1.0))
+    angular_velocity: Vector3 = field(default_factory=lambda: Vector3(0.0, 0.0, 0.0))
 
 
 @dataclass(frozen=True)
