@@ -1,6 +1,5 @@
-"""Scenario harness for deterministic mechanic evaluation."""
+"""Scenario runners."""
 
-from __future__ import annotations
+from .run import main
 
-__all__ = []
-
+__all__ = ["main"]

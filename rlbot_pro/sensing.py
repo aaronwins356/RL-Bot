@@ -1,133 +1,75 @@
-import numpy as np
-from typing import Tuple
+from __future__ import annotations
 
-from rlbot_pro.math3d import vec3, normalize, dot, angle_between
-from rlbot_pro.state import GameState, CarState, BallState, Vector
-from rlbot_pro.physics_helpers import GRAVITY, CAR_MAX_SPEED
+import math
 
+from rlbot_pro.math3d import distance, magnitude, normalize, signed_angle_2d, vec_sub
+from rlbot_pro.state import GameState, Vector
 
-def get_car_to_ball_vector(car: CarState, ball: BallState) -> np.ndarray:
-    """Returns the vector from the car to the ball."""
-    return np.array(ball.pos) - np.array(car.pos)
-
-
-def get_car_to_target_vector(car: CarState, target: np.ndarray) -> np.ndarray:
-    """Returns the vector from the car to a target position."""
-    return target - np.array(car.pos)
+NET_Y = 5120.0
+FIELD_X = 4096.0
+FIELD_Y = 5120.0
+FIELD_Z = 2044.0
 
 
-def get_ball_to_target_vector(ball: BallState, target: np.ndarray) -> np.ndarray:
-    """Returns the vector from the ball to a target position."""
-    return target - np.array(ball.pos)
+def angle_to_target(origin: Vector, target: Vector) -> float:
+    direction = vec_sub(target, origin)
+    facing = (0.0, 1.0, 0.0)
+    return signed_angle_2d(facing, direction)
 
 
-def get_car_forward_vector(car: CarState) -> np.ndarray:
-    """Returns the car's forward vector as a numpy array."""
-    return normalize(np.array(car.forward))
+def angle_between_vectors(a: Vector, b: Vector) -> float:
+    return signed_angle_2d(a, b)
 
 
-def get_car_right_vector(car: CarState) -> np.ndarray:
-    """Returns the car's right vector as a numpy array."""
-    return normalize(np.cross(np.array(car.up), np.array(car.forward))) * -1.0
+def time_to_ball_touch(gs: GameState) -> float:
+    relative_pos = distance(gs.car.pos, gs.ball.pos)
+    relative_vel = magnitude(vec_sub(gs.ball.vel, gs.car.vel))
+    if relative_vel < 1e-3:
+        return float("inf")
+    return max(0.0, relative_pos / relative_vel)
 
 
-def get_car_up_vector(car: CarState) -> np.ndarray:
-    """Returns the car's up vector as a numpy array."""
-    return normalize(np.array(car.up))
+def time_to_height(gs: GameState, target_z: float) -> float:
+    vz = gs.car.vel[2]
+    dz = target_z - gs.car.pos[2]
+    if abs(vz) < 1e-3:
+        return float("inf") if dz > 0 else 0.0
+    t = dz / vz
+    return t if t >= 0 else float("inf")
 
 
-def get_car_local_coords(car: CarState, target: np.ndarray) -> np.ndarray:
-    """
-    Transforms a global target position into the car's local coordinate system.
-    X: forward/backward, Y: left/right, Z: up/down
-    """
-    car_pos = np.array(car.pos)
-    car_forward = get_car_forward_vector(car)
-    car_up = get_car_up_vector(car)
-    car_right = get_car_right_vector(car)
-
-    offset = target - car_pos
-    local_x = dot(offset, car_forward)
-    local_y = dot(offset, car_right)
-    local_z = dot(offset, car_up)
-    return vec3(local_x, local_y, local_z)
+def is_car_grounded(gs: GameState) -> bool:
+    return gs.car.on_ground or gs.car.pos[2] <= 5.0
 
 
-def get_time_to_ball(car: CarState, ball: BallState, max_time: float = 6.0) -> float:
-    """
-    Estimates the time it will take for the car to reach the ball.
-    Simplified linear prediction.
-    """
-    car_pos = np.array(car.pos)
-    car_vel = np.array(car.vel)
-    ball_pos = np.array(ball.pos)
-    ball_vel = np.array(ball.vel)
-
-    dist = np.linalg.norm(ball_pos - car_pos)
-    relative_vel = np.linalg.norm(car_vel - ball_vel)
-
-    if relative_vel > 50:  # If there's significant relative speed
-        time_to_reach = dist / relative_vel
-    else:  # If relative speed is low, assume max car speed
-        time_to_reach = dist / CAR_MAX_SPEED
-
-    return min(time_to_reach, max_time)
+def is_near_wall(pos: Vector, margin: float = 200.0) -> bool:
+    return abs(pos[0]) > FIELD_X - margin or abs(pos[1]) > FIELD_Y - margin
 
 
-def get_angle_to_net(car: CarState, team: int) -> float:
-    """
-    Calculates the angle from the car's forward vector to the opponent's net.
-    Team 0 (blue) attacks +Y, Team 1 (orange) attacks -Y.
-    """
-    car_forward = get_car_forward_vector(car)
-    opponent_goal_pos = vec3(0, 5120 * (1 if team == 0 else -1), 0)
-    car_to_goal = normalize(opponent_goal_pos - np.array(car.pos))
-    return angle_between(car_forward, car_to_goal)
+def has_shot_line(gs: GameState, net_y: float = NET_Y) -> bool:
+    ball_to_net = (gs.ball.pos[0], net_y - gs.ball.pos[1], gs.ball.pos[2])
+    car_to_ball = vec_sub(gs.ball.pos, gs.car.pos)
+    angle = abs(signed_angle_2d(car_to_ball, ball_to_net))
+    return angle < math.radians(30)
 
 
-def get_urgency(car: CarState, ball: BallState) -> float:
-    """
-    Calculates an urgency score based on ball proximity and threat.
-    Higher urgency means the ball is closer and/or more dangerous.
-    """
-    car_pos = np.array(car.pos)
-    ball_pos = np.array(ball.pos)
-    ball_vel = np.array(ball.vel)
-
-    dist_to_ball = np.linalg.norm(ball_pos - car_pos)
-    time_to_ball = get_time_to_ball(car, ball)
-
-    # Simple threat assessment: ball moving towards our net
-    our_goal_y = -5120 if car.pos[1] > 0 else 5120  # Approximate our goal line
-    ball_to_our_goal = vec3(0, our_goal_y, 0) - ball_pos
-    threat_score = clamp(dot(normalize(ball_vel), normalize(ball_to_our_goal)), 0.0, 1.0)
-
-    # Urgency increases with proximity and threat
-    urgency = (1.0 - clamp(dist_to_ball / 6000, 0.0, 1.0)) + threat_score * 0.5
-    return clamp(urgency, 0.0, 1.0)
+def forward_alignment(gs: GameState) -> float:
+    car_forward = normalize(gs.car.forward)
+    to_ball = normalize(vec_sub(gs.ball.pos, gs.car.pos))
+    return 1.0 - min(1.0, abs(signed_angle_2d(car_forward, to_ball)) / math.pi)
 
 
-def predict_ball_pos_at_time(ball: BallState, time: float) -> np.ndarray:
-    """
-    Predicts the ball's position at a future time, considering gravity.
-    """
-    ball_pos = np.array(ball.pos)
-    ball_vel = np.array(ball.vel)
-    return ball_pos + ball_vel * time + 0.5 * GRAVITY * time**2
+def pressure_factor(ball_pos: Vector) -> float:
+    return min(1.0, max(0.0, (NET_Y - abs(ball_pos[1])) / NET_Y))
 
 
-def is_car_on_wall(car: CarState) -> bool:
-    """Checks if the car is on a wall (not ground or ceiling)."""
-    # A car is on a wall if its up vector is mostly horizontal
-    return abs(dot(get_car_up_vector(car), vec3(0, 0, 1))) < 0.5 and car.on_ground
-
-
-def is_car_on_ceiling(car: CarState) -> bool:
-    """Checks if the car is on the ceiling."""
-    # A car is on the ceiling if its up vector is mostly downwards
-    return dot(get_car_up_vector(car), vec3(0, 0, 1)) < -0.5 and car.on_ground
-
-
-def is_car_on_ground(car: CarState) -> bool:
-    """Checks if the car is on the ground."""
-    return car.on_ground and dot(get_car_up_vector(car), vec3(0, 0, 1)) > 0.5
+__all__ = [
+    "angle_to_target",
+    "time_to_ball_touch",
+    "time_to_height",
+    "is_car_grounded",
+    "is_near_wall",
+    "has_shot_line",
+    "forward_alignment",
+    "pressure_factor",
+]

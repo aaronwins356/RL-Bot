@@ -1,22 +1,36 @@
+from __future__ import annotations
+
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Tuple
 
-Vector = Tuple[float, float, float]
+Vector = tuple[float, float, float]
 
 
-@dataclass(frozen=True)
+def _as_vector(values: Iterable[float]) -> Vector:
+    data = tuple(float(v) for v in values)
+    if len(data) != 3:
+        message = "Vectors must contain exactly three components"
+        raise ValueError(message)
+    return data
+
+
+@dataclass(frozen=True, slots=True)
 class BallState:
-    """Represents the state of the ball."""
-
     pos: Vector
     vel: Vector
-    ang_vel: Vector = (0.0, 0.0, 0.0)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "pos", _as_vector(self.pos))
+        object.__setattr__(self, "vel", _as_vector(self.vel))
+
+    def predict(self, dt: float) -> BallState:
+        px, py, pz = self.pos
+        vx, vy, vz = self.vel
+        return BallState((px + vx * dt, py + vy * dt, pz + vz * dt), self.vel)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CarState:
-    """Represents the state of a car."""
-
     pos: Vector
     vel: Vector
     ang_vel: Vector
@@ -27,11 +41,54 @@ class CarState:
     on_ground: bool
     time: float
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "pos", _as_vector(self.pos))
+        object.__setattr__(self, "vel", _as_vector(self.vel))
+        object.__setattr__(self, "ang_vel", _as_vector(self.ang_vel))
+        object.__setattr__(self, "forward", _as_vector(self.forward))
+        object.__setattr__(self, "up", _as_vector(self.up))
+        boost = max(0.0, min(100.0, float(self.boost)))
+        object.__setattr__(self, "boost", boost)
 
-@dataclass(frozen=True)
+    @property
+    def location(self) -> Vector:
+        return self.pos
+
+    @property
+    def velocity(self) -> Vector:
+        return self.vel
+
+    def with_time(self, time: float) -> CarState:
+        return CarState(
+            pos=self.pos,
+            vel=self.vel,
+            ang_vel=self.ang_vel,
+            forward=self.forward,
+            up=self.up,
+            boost=self.boost,
+            has_flip=self.has_flip,
+            on_ground=self.on_ground,
+            time=time,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class GameState:
-    """Represents the overall game state."""
-
     ball: BallState
     car: CarState
     dt: float
+
+    def __post_init__(self) -> None:
+        if self.dt <= 0.0:
+            message = "dt must be positive"
+            raise ValueError(message)
+
+    def advance(self, pos: Vector, vel: Vector, dt: float | None = None) -> GameState:
+        new_dt = float(self.dt if dt is None else dt)
+        if new_dt <= 0.0:
+            message = "dt must be positive"
+            raise ValueError(message)
+        return GameState(ball=BallState(pos, vel), car=self.car, dt=new_dt)
+
+
+__all__ = ["Vector", "BallState", "CarState", "GameState"]

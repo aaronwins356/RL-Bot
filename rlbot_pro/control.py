@@ -1,13 +1,10 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Controls:
-    """
-    Represents the control inputs for the car.
-    All values should be between -1.0 and 1.0, except for boolean flags.
-    """
-
     throttle: float = 0.0
     steer: float = 0.0
     pitch: float = 0.0
@@ -17,9 +14,21 @@ class Controls:
     jump: bool = False
     handbrake: bool = False
 
-    def __str__(self) -> str:
-        """Custom string representation for easier debugging."""
-        return (
-            f"Controls(T={self.throttle:.2f}, S={self.steer:.2f}, P={self.pitch:.2f}, "
-            f"Y={self.yaw:.2f}, R={self.roll:.2f}, B={self.boost}, J={self.jump}, H={self.handbrake})"
+    def clamped(self) -> Controls:
+        return Controls(
+            throttle=_clamp(self.throttle),
+            steer=_clamp(self.steer),
+            pitch=_clamp(self.pitch),
+            yaw=_clamp(self.yaw),
+            roll=_clamp(self.roll),
+            boost=bool(self.boost),
+            jump=bool(self.jump),
+            handbrake=bool(self.handbrake),
         )
+
+
+def _clamp(value: float) -> float:
+    return max(-1.0, min(1.0, float(value)))
+
+
+__all__ = ["Controls"]

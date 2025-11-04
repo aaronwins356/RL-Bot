@@ -1,101 +1,118 @@
-import numpy as np
-from typing import Tuple
+from __future__ import annotations
 
-Vector = Tuple[float, float, float]
+import math
+from collections.abc import Iterable, Sequence
 
-
-def vec3(x: float, y: float, z: float) -> np.ndarray:
-    """Creates a 3D numpy vector."""
-    return np.array([x, y, z], dtype=float)
+from rlbot_pro.state import Vector
 
 
-def to_vec3(v: Vector) -> np.ndarray:
-    """Converts a tuple Vector to a numpy array."""
-    return np.array(v, dtype=float)
+def vec(values: Iterable[float]) -> Vector:
+    data = tuple(float(v) for v in values)
+    if len(data) != 3:
+        message = "Vector requires exactly three components"
+        raise ValueError(message)
+    return data
 
 
-def to_tuple(v: np.ndarray) -> Vector:
-    """Converts a numpy array to a tuple Vector."""
-    return (v[0], v[1], v[2])
+def vec_add(a: Vector, b: Vector) -> Vector:
+    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
 
 
-def normalize(v: np.ndarray) -> np.ndarray:
-    """Normalizes a vector."""
-    norm = np.linalg.norm(v)
-    return v / norm if norm > 1e-6 else np.array([0.0, 0.0, 0.0])
+def vec_sub(a: Vector, b: Vector) -> Vector:
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
 
 
-def dot(v1: np.ndarray, v2: np.ndarray) -> float:
-    """Computes the dot product of two vectors."""
-    return np.dot(v1, v2)
+def vec_scale(a: Vector, scale: float) -> Vector:
+    return (a[0] * scale, a[1] * scale, a[2] * scale)
 
 
-def cross(v1: np.ndarray, v2: np.ndarray) -> np.ndarray:
-    """Computes the cross product of two vectors."""
-    return np.cross(v1, v2)
+def dot(a: Vector, b: Vector) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
 
-def look_at(target: np.ndarray, current_up: np.ndarray) -> np.ndarray:
-    """
-    Creates a rotation matrix that makes the 'forward' vector point towards 'target'.
-    'current_up' is used to define the 'up' direction.
-    Returns a 3x3 rotation matrix.
-    """
-    forward = normalize(target)
-    left = normalize(cross(current_up, forward))
-    up = normalize(cross(forward, left))
-    return np.array([forward, left, up]).T
+def cross(a: Vector, b: Vector) -> Vector:
+    return (
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    )
 
 
-def rotation_matrix_from_euler(roll: float, pitch: float, yaw: float) -> np.ndarray:
-    """
-    Creates a 3x3 rotation matrix from Euler angles (roll, pitch, yaw).
-    Order of application: yaw, pitch, roll.
-    """
-    cr = np.cos(roll)
-    sr = np.sin(roll)
-    cp = np.cos(pitch)
-    sp = np.sin(pitch)
-    cy = np.cos(yaw)
-    sy = np.sin(yaw)
-
-    # Yaw matrix
-    R_z = np.array([
-        [cy, -sy, 0],
-        [sy, cy, 0],
-        [0, 0, 1]
-    ])
-
-    # Pitch matrix
-    R_y = np.array([
-        [cp, 0, sp],
-        [0, 1, 0],
-        [-sp, 0, cp]
-    ])
-
-    # Roll matrix
-    R_x = np.array([
-        [1, 0, 0],
-        [0, cr, -sr],
-        [0, sr, cr]
-    ])
-
-    return R_z @ R_y @ R_x
+def magnitude(a: Vector) -> float:
+    return math.sqrt(dot(a, a))
 
 
-def clamp(value: float, min_val: float, max_val: float) -> float:
-    """Clamps a value between a minimum and maximum."""
-    return max(min_val, min(value, max_val))
+def distance(a: Vector, b: Vector) -> float:
+    return magnitude(vec_sub(a, b))
 
 
-def angle_between(v1: np.ndarray, v2: np.ndarray) -> float:
-    """Computes the angle in radians between two vectors."""
-    v1_norm = normalize(v1)
-    v2_norm = normalize(v2)
-    return np.arccos(clamp(dot(v1_norm, v2_norm), -1.0, 1.0))
+def normalize(a: Vector) -> Vector:
+    mag = magnitude(a)
+    if mag == 0.0:
+        return (0.0, 0.0, 0.0)
+    inv = 1.0 / mag
+    return (a[0] * inv, a[1] * inv, a[2] * inv)
 
 
-def rotate_vector(v: np.ndarray, axis: np.ndarray, angle: float) -> np.ndarray:
-    """Rotates a vector around an axis by a given angle using Rodrigues' rotation formula."""
-    axis = normalize(axis)
-    return v * np.cos(angle) + cross(axis, v) * np.sin(angle) + axis * dot(axis, v) * (1 - np.cos(angle))
+def clamp(value: float, minimum: float, maximum: float) -> float:
+    if minimum > maximum:
+        message = "minimum cannot exceed maximum"
+        raise ValueError(message)
+    return max(minimum, min(maximum, value))
+
+
+def lerp(a: float, b: float, t: float) -> float:
+    return a + (b - a) * t
+
+
+def project(a: Vector, onto: Vector) -> Vector:
+    onto_unit = normalize(onto)
+    scale = dot(a, onto_unit)
+    return vec_scale(onto_unit, scale)
+
+
+def angle_between(a: Vector, b: Vector) -> float:
+    na = normalize(a)
+    nb = normalize(b)
+    cos_theta = clamp(dot(na, nb), -1.0, 1.0)
+    return math.acos(cos_theta)
+
+
+def rotate2d(vec2: Sequence[float], angle: float) -> tuple[float, float]:
+    x, y = vec2
+    c = math.cos(angle)
+    s = math.sin(angle)
+    return (x * c - y * s, x * s + y * c)
+
+
+def flatten(a: Vector) -> tuple[float, float]:
+    return (a[0], a[1])
+
+
+def signed_angle_2d(a: Vector, b: Vector) -> float:
+    ax, ay = flatten(normalize(a))
+    bx, by = flatten(normalize(b))
+    dot_ab = clamp(ax * bx + ay * by, -1.0, 1.0)
+    angle = math.acos(dot_ab)
+    cross_z = ax * by - ay * bx
+    return angle if cross_z >= 0 else -angle
+
+
+__all__ = [
+    "vec",
+    "vec_add",
+    "vec_sub",
+    "vec_scale",
+    "dot",
+    "cross",
+    "magnitude",
+    "distance",
+    "normalize",
+    "clamp",
+    "lerp",
+    "project",
+    "angle_between",
+    "rotate2d",
+    "flatten",
+    "signed_angle_2d",
+]

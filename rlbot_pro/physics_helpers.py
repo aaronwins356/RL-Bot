@@ -1,136 +1,133 @@
-import numpy as np
-from typing import Tuple
+from __future__ import annotations
 
-from rlbot_pro.math3d import vec3, normalize, dot, clamp
-from rlbot_pro.state import GameState, BallState, CarState, Vector
+import math
+from collections.abc import Sequence
 
-# Constants for Rocket League physics
-GRAVITY = vec3(0, 0, -650)  # Units per second squared
-CAR_MAX_SPEED = 2300  # Units per second
-BOOST_ACCELERATION = 991.667  # Units per second squared
-CAR_DRAG_COEFF = -0.03  # Simplified drag coefficient
+from rlbot_pro.state import BallState, Vector
+
+GRAVITY = (0.0, 0.0, -650.0)
 
 
-def get_car_forward_vector(car: CarState) -> np.ndarray:
-    """Returns the car's forward vector as a numpy array."""
-    return normalize(np.array(car.forward))
+def integrate_constant_accel(
+    pos: Vector, vel: Vector, acc: Vector, dt: float
+) -> tuple[Vector, Vector]:
+    px, py, pz = pos
+    vx, vy, vz = vel
+    ax, ay, az = acc
+    new_pos = (
+        px + vx * dt + 0.5 * ax * dt * dt,
+        py + vy * dt + 0.5 * ay * dt * dt,
+        pz + vz * dt + 0.5 * az * dt * dt,
+    )
+    new_vel = (vx + ax * dt, vy + ay * dt, vz + az * dt)
+    return new_pos, new_vel
 
 
-def get_car_up_vector(car: CarState) -> np.ndarray:
-    """Returns the car's up vector as a numpy array."""
-    return normalize(np.array(car.up))
+def estimate_ball_bounce(ball: BallState, elasticity: float = 0.6) -> BallState:
+    pos = ball.pos
+    vel = ball.vel
+    if pos[2] <= 0.0 and vel[2] < 0.0:
+        vel = (vel[0], vel[1], -vel[2] * elasticity)
+        pos = (pos[0], pos[1], 0.0)
+    elif pos[2] > 0.0 and vel[2] < 0.0:
+        time_to_floor = max(0.0, pos[2] / max(1e-3, -vel[2]))
+        new_pos, new_vel = integrate_constant_accel(pos, vel, GRAVITY, time_to_floor)
+        new_vel = (new_vel[0], new_vel[1], -new_vel[2] * elasticity)
+        pos = (new_pos[0], new_pos[1], max(0.0, new_pos[2]))
+        vel = new_vel
+    return BallState(pos, vel)
 
 
-def constant_acceleration_kinematics(
-    initial_pos: np.ndarray,
-    initial_vel: np.ndarray,
-    acceleration: np.ndarray,
-    time: float,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Calculates position and velocity after 'time' seconds under constant acceleration.
-    """
-    final_pos = initial_pos + initial_vel * time + 0.5 * acceleration * time**2
-    final_vel = initial_vel + acceleration * time
-    return final_pos, final_vel
+def estimate_backboard_bounce(
+    ball: BallState, board_y: float = 5120.0, elasticity: float = 0.6
+) -> BallState:
+    by = ball.pos[1]
+    vy = ball.vel[1]
+    if abs(by) < board_y:
+        return ball
+    if (by > 0 and vy > 0) or (by < 0 and vy < 0):
+        new_vy = -vy * elasticity
+        new_py = math.copysign(board_y - 10.0, by)
+        next_pos = (ball.pos[0], new_py, ball.pos[2])
+        next_vel = (ball.vel[0], new_vy, ball.vel[2])
+        return BallState(next_pos, next_vel)
+    return ball
 
 
-def estimate_ball_bounce(
-    ball: BallState,
-    car_pos: np.ndarray,
-    max_time: float = 6.0,
-    steps: int = 60,
-) -> Tuple[np.ndarray, float] | None:
-    """
-    Estimates the ball's next bounce point and time on the ground or wall.
-    Simplified for backboard bounces.
-    Returns (bounce_pos, bounce_time) or None if no bounce within max_time.
-    """
-    sim_ball_pos = np.array(ball.pos)
-    sim_ball_vel = np.array(ball.vel)
-    sim_ball_ang_vel = np.array(ball.ang_vel)
-    dt = max_time / steps
-
-    for i in range(steps):
-        # Apply gravity
-        sim_ball_vel += GRAVITY * dt
-        sim_ball_pos += sim_ball_vel * dt
-
-        # Simple ground/wall collision (very basic, assumes flat ground/walls)
-        if sim_ball_pos[2] < 93:  # Ground height
-            sim_ball_pos[2] = 93
-            sim_ball_vel[2] *= -0.7  # Simple bounce, 70% restitution
-            if np.linalg.norm(sim_ball_vel) < 100:  # Ball comes to rest
-                sim_ball_vel = vec3(0, 0, 0)
-
-        # Check for wall collision (simplified for backboard)
-        # Assuming standard field dimensions, backboards are at Y = +/- 5120
-        if abs(sim_ball_pos[1]) > 5100:
-            sim_ball_pos[1] = np.sign(sim_ball_pos[1]) * 5100
-            sim_ball_vel[1] *= -0.7  # Simple bounce
-            return sim_ball_pos, i * dt
-
-        # Check if ball is moving away from car or too far
-        if np.linalg.norm(sim_ball_pos - car_pos) > 6000:
-            return None
-
-    return None
+def time_until_height(
+    pos: Vector, vel: Vector, target_z: float, acc: Vector = GRAVITY
+) -> float | None:
+    _, _, pz = pos
+    _, _, vz = vel
+    _, _, az = acc
+    a = 0.5 * az
+    b = vz
+    c = pz - target_z
+    discriminant = b * b - 4 * a * c
+    if discriminant < 0:
+        return None
+    sqrt_disc = math.sqrt(discriminant)
+    t1 = (-b - sqrt_disc) / (2 * a) if a != 0 else None
+    t2 = (-b + sqrt_disc) / (2 * a) if a != 0 else None
+    candidates = [t for t in (t1, t2) if t is not None and t >= 0]
+    return min(candidates, default=None)
 
 
-def cubic_spline_point(
-    p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, p3: np.ndarray, t: float
-) -> np.ndarray:
-    """
-    Calculates a point on a cubic Bezier spline.
-    t should be between 0 and 1.
-    """
-    t2 = t * t
-    t3 = t2 * t
-    mt = 1 - t
-    mt2 = mt * mt
-    mt3 = mt2 * mt
+def cubic_spline(
+    points: Sequence[tuple[float, float]] | Sequence[Vector],
+    resolution: int = 50,
+) -> list[tuple[float, float]]:
+    if resolution < 2:
+        message = "resolution must be at least 2"
+        raise ValueError(message)
+    if len(points) < 2:
+        message = "at least two points are required"
+        raise ValueError(message)
+    xs = [float(p[0]) for p in points]
+    ys = [float(p[1]) for p in points]
+    n = len(points)
+    hs = [xs[i + 1] - xs[i] for i in range(n - 1)]
+    if any(h == 0 for h in hs):
+        message = "points must have unique x values"
+        raise ValueError(message)
+    alphas = [0.0] * n
+    for i in range(1, n - 1):
+        forward_slope = (ys[i + 1] - ys[i]) / hs[i]
+        backward_slope = (ys[i] - ys[i - 1]) / hs[i - 1]
+        alphas[i] = 3 * (forward_slope - backward_slope)
+    ls = [1.0] + [0.0] * (n - 1)
+    mus = [0.0] * n
+    zs = [0.0] * n
+    for i in range(1, n - 1):
+        ls[i] = 2 * (xs[i + 1] - xs[i - 1]) - hs[i - 1] * mus[i - 1]
+        mus[i] = hs[i] / ls[i]
+        zs[i] = (alphas[i] - hs[i - 1] * zs[i - 1]) / ls[i]
+    ls[-1] = 1.0
+    zs[-1] = 0.0
+    cs = [0.0] * n
+    bs = [0.0] * (n - 1)
+    ds = [0.0] * (n - 1)
+    for j in range(n - 2, -1, -1):
+        cs[j] = zs[j] - mus[j] * cs[j + 1]
+        bs[j] = (ys[j + 1] - ys[j]) / hs[j] - hs[j] * (cs[j + 1] + 2 * cs[j]) / 3
+        ds[j] = (cs[j + 1] - cs[j]) / (3 * hs[j])
+    samples: list[tuple[float, float]] = []
+    step_count = max(1, resolution // (n - 1))
+    for i in range(n - 1):
+        x0 = xs[i]
+        for step in range(step_count):
+            t = hs[i] * (step / step_count)
+            y = ys[i] + bs[i] * t + cs[i] * t * t + ds[i] * t * t * t
+            samples.append((x0 + t, y))
+    samples.append((xs[-1], ys[-1]))
+    return samples
 
-    return mt3 * p0 + 3 * mt2 * t * p1 + 3 * mt * t2 * p2 + t3 * p3
 
-
-def get_car_facing_vector(car: CarState) -> np.ndarray:
-    """Returns the car's facing vector (forward) as a numpy array."""
-    return np.array(car.forward)
-
-
-def get_car_right_vector(car: CarState) -> np.ndarray:
-    """Returns the car's right vector as a numpy array."""
-    # Cross product of up and forward gives left, so negate for right
-    return np.cross(np.array(car.up), np.array(car.forward)) * -1.0
-
-
-def get_car_local_coords(car: CarState, target: np.ndarray) -> np.ndarray:
-    """
-    Transforms a global target position into the car's local coordinate system.
-    X: forward/backward, Y: left/right, Z: up/down
-    """
-    car_pos = np.array(car.pos)
-    car_forward = get_car_facing_vector(car)
-    car_up = get_car_up_vector(car)
-    car_right = get_car_right_vector(car)
-
-    offset = target - car_pos
-    local_x = dot(offset, car_forward)
-    local_y = dot(offset, car_right)
-    local_z = dot(offset, car_up)
-    return vec3(local_x, local_y, local_z)
-
-
-def get_car_angular_velocity_local(car: CarState) -> np.ndarray:
-    """
-    Transforms the car's global angular velocity into its local coordinate system.
-    """
-    car_forward = get_car_facing_vector(car)
-    car_up = get_car_up_vector(car)
-    car_right = get_car_right_vector(car)
-    ang_vel_global = np.array(car.ang_vel)
-
-    local_pitch_rate = dot(ang_vel_global, car_right)
-    local_yaw_rate = dot(ang_vel_global, car_up)
-    local_roll_rate = dot(ang_vel_global, car_forward)
-    return vec3(local_pitch_rate, local_yaw_rate, local_roll_rate)
+__all__ = [
+    "GRAVITY",
+    "integrate_constant_accel",
+    "estimate_ball_bounce",
+    "estimate_backboard_bounce",
+    "time_until_height",
+    "cubic_spline",
+]
