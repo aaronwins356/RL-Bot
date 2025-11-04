@@ -1,0 +1,63 @@
+training:
+  # Environment settings
+  team_size: 1
+  max_steps: 1000
+  obs_builder:
+    _target_: rlgym.utils.obs_builders.advanced_obs.AdvancedObs
+  state_setter:
+    _target_: rlgym.utils.state_setters.random_state.RandomState
+
+  # Reward weights
+  rewards:
+    touch: 1.0
+    shot: 2.0
+    recovery: 0.5
+    style: 0.3
+
+  # Training parameters
+  total_timesteps: 10000000
+  checkpoint_freq: 100000
+  eval_freq: 50000
+  n_eval_episodes: 20
+
+# Model hyperparameters
+model_params:
+  learning_rate: 0.0003
+  n_steps: 2048
+  batch_size: 64
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+
+# Curriculum settings
+curriculum:
+  scenarios:
+    - basic_control
+    - aerial
+    - wall_play
+    - advanced_aerial
+    - freestyle
+  
+  thresholds:
+    - 0.7  # Basic control success rate
+    - 0.6  # Aerial success rate
+    - 0.5  # Wall play success rate
+    - 0.4  # Advanced aerial success rate
+    - 0.3  # Freestyle success rate
+    
+  update_freq: 100000  # Steps between curriculum updates
+
+# Evaluation settings
+evaluation:
+  n_episodes: 100
+  mechanics:
+    - aerial
+    - flip_reset
+    - ceiling
+    - double_tap
+  record_video: true
+  save_replays: true
