@@ -1,8 +1,8 @@
 import numpy as np
 from typing import List
-from util.game_state import GameState, PlayerData
+
 from sequences.sequence import Sequence
-from util.common_values import CAR_MAX_SPEED, MAX_CAR_VELOCITY, BOOST_USAGE_PER_SECOND, MAX_BOOST
+from util.game_state import GameState, PlayerData
 
 class WaveDash(Sequence):
     def __init__(self):
@@ -18,17 +18,18 @@ class WaveDash(Sequence):
         # A full implementation would check for a specific angle to the ground/wall.
         
         # Check if car is on the ground or close to it (z-axis)
-        on_ground = player.car_data.position[2] < 50
-        
-        # Check if car has a flip available (not on ground and not flipped)
-        has_flip = player.car_data.has_jump and not player.car_data.is_flipped
+        on_ground = player.on_ground
+
+        # Check if car has a flip available and isn't currently mid-flip
+        airborne_without_flip = player.jumped and not player.on_ground
+        has_flip = player.has_flip and not airborne_without_flip
         
         # Check if the car is moving fast enough to make a wavedash useful
         speed = np.linalg.norm(player.car_data.linear_velocity)
         is_fast_enough = speed > 500
         
         # Only allow a wavedash if we are on the ground/wall and have a flip
-        return (on_ground or player.car_data.is_on_wall) and has_flip and is_fast_enough
+        return (on_ground or player.is_on_wall) and has_flip and is_fast_enough
 
     def get_action(self, player: PlayerData, game_state: GameState, prev_action: np.ndarray) -> List:
         # Reset sequence if it's the first step

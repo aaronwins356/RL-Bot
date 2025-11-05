@@ -24,7 +24,7 @@ class HalfFlip(Sequence):
         # A proper implementation would check the direction of travel.
         is_moving_slowly = speed < 500
         
-        return on_ground and is_moving_slowly and player.car_data.has_jump
+        return on_ground and is_moving_slowly and player.has_jump
 
     def get_action(self, player: PlayerData, game_state: GameState, prev_action: np.ndarray) -> List:
         # Reset sequence if it's the first step

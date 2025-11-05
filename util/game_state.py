@@ -13,6 +13,7 @@ class GameState:
         self.orange_score = 0
         self.players: List[PlayerData] = []
         self._on_ground_ticks = np.zeros(64)
+        self.last_touch = None
 
         self.ball: PhysicsObject = PhysicsObject()
         self.inverted_ball: PhysicsObject = PhysicsObject()
@@ -46,17 +47,26 @@ class GameState:
         player_data.car_data.decode_car_data(player_info.physics)
         player_data.inverted_car_data.invert(player_data.car_data)
 
-        if player_info.has_wheel_contact:
+        has_contact = player_info.has_wheel_contact
+        altitude = player_data.car_data.position[2]
+
+        if has_contact:
             self._on_ground_ticks[index] = 0
         else:
             self._on_ground_ticks[index] += ticks_elapsed
 
+        recently_on_ground = self._on_ground_ticks[index] <= 6
+
         player_data.car_id = index
         player_data.team_num = player_info.team
         player_data.is_demoed = player_info.is_demolished
-        player_data.on_ground = player_info.has_wheel_contact or self._on_ground_ticks[index] <= 6
+        player_data.on_ground = (has_contact and altitude < 50) or (recently_on_ground and altitude < 120)
+        player_data.is_on_wall = has_contact and not player_data.on_ground and altitude >= 50
         player_data.ball_touched = False
-        player_data.has_flip = not player_info.double_jumped  # RLGym does consider the timer/unlimited flip, but i'm too lazy to track that in rlbot
+        player_data.jumped = player_info.jumped
+        player_data.double_jumped = player_info.double_jumped
+        player_data.has_flip = not player_info.double_jumped
+        player_data.has_jump = player_data.on_ground or not player_info.jumped
         player_data.boost_amount = player_info.boost / 100
 
         return player_data

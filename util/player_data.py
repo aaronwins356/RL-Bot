@@ -7,8 +7,12 @@ class PlayerData(object):
         self.team_num: int = -1
         self.is_demoed: bool = False
         self.on_ground: bool = False
+        self.is_on_wall: bool = False
         self.ball_touched: bool = False
         self.has_flip: bool = False
+        self.has_jump: bool = False
+        self.jumped: bool = False
+        self.double_jumped: bool = False
         self.boost_amount: float = -1
         self.car_data: PhysicsObject = PhysicsObject()
         self.inverted_car_data: PhysicsObject = PhysicsObject()
