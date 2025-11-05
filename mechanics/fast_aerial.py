@@ -111,8 +111,11 @@ class FastAerial:
         pitch = -to_target_norm[2] * 1.5  # Negative because pitch down is positive
         pitch = np.clip(pitch, -1, 1)
         
-        # Yaw: angle in xy plane
-        yaw = np.arctan2(to_target_norm[1] - forward[1], to_target_norm[0] - forward[0])
+        # Yaw: angle in xy plane - use proper proportional control
+        # Calculate angle difference and convert to control input
+        yaw_angle = np.arctan2(to_target_norm[1] - forward[1], to_target_norm[0] - forward[0])
+        # Apply proportional control with gain
+        yaw = yaw_angle * 0.5  # Proportional control with gain of 0.5
         yaw = np.clip(yaw, -1, 1)
         
         # Boost if pointing roughly toward target

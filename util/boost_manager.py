@@ -286,6 +286,10 @@ class BoostManager:
         """
         Calculate optimal path to target that collects boost pads along the way.
         
+        Note: This performs O(n) vector operations per frame. For optimization,
+        consider implementing spatial partitioning (quadtree) or caching results
+        when car position hasn't changed significantly.
+        
         Args:
             player: Our player state
             target_position: Where we want to go

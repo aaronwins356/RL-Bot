@@ -18,7 +18,7 @@ class WinYour1s(BaseAgent):
         self.obs_builder = CustomObs(cars=2)
         self.action_trans = np.array([-1, -1, -1, -1, -1, 0, 0, 0])
         self.agent = Agent(self.obs_builder.obs_size, action_categoricals=5, action_bernoullis=3)
-        self.tick_skip = 4  # REDUCED from 8 to 4 for faster reactions (30 FPS)
+        self.tick_skip = 4  # REDUCED from 8 to 4 for faster reactions (30 FPS at 120 tick rate)
         self.game_state: GameState = None
         self.controls = None
         self.action = None

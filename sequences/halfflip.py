@@ -16,7 +16,12 @@ class HalfFlip(Sequence):
         self.cancel_applied = False
 
     def is_valid(self, player: PlayerData, game_state: GameState) -> bool:
-        """Check if halfflip can be executed"""
+        """
+        Check if halfflip can be executed.
+        
+        Note: This calculates forward() each frame. For optimization, consider
+        caching this value or only computing when state changes to 'idle'.
+        """
         # Must be in idle state
         if self.state != 'idle':
             return False
@@ -30,7 +35,7 @@ class HalfFlip(Sequence):
         # Check if car is moving backward relative to its forward vector
         car = player.car_data
         velocity = car.linear_velocity
-        forward = car.forward()
+        forward = car.forward()  # Note: Computed each frame, could be cached
         
         # Dot product: negative means moving backward
         velocity_forward = np.dot(velocity, forward)

@@ -222,7 +222,10 @@ class ShadowDefense:
             self.last_fake_time = current_time
         
         if self.fake_challenge_cooldown > 0:
-            self.fake_challenge_cooldown -= 1/30  # Assume 30 FPS
+            # Decrement by dt (time since last tick) for frame-rate independence
+            # Note: Caller should pass dt as parameter, for now use conservative estimate
+            dt = 1/120  # Conservative: assumes 120 tick rate
+            self.fake_challenge_cooldown -= dt
             
             ball = game_state.ball
             car = player.car_data

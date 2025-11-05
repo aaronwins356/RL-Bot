@@ -159,14 +159,12 @@ class BallPredictor:
             target_time: Time in seconds from now
             
         Returns:
-            BallPrediction at target_time, or None if beyond prediction horizon
+            BallPrediction at target_time, or last available prediction if beyond horizon
         """
-        if target_time > self.prediction_horizon:
-            return None
-        
         predictions = self.predict_trajectory(ball_state)
         
         # Find closest prediction to target time
+        # If beyond horizon, return last available prediction (better than None)
         idx = min(int(target_time / self.timestep), len(predictions) - 1)
         return predictions[idx]
     
