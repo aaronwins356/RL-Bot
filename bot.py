@@ -5,10 +5,12 @@ import numpy as np
 from agent import Agent
 from obs import CustomObs
 from sequences.speedflip import Speedflip
+from sequences.wavedash import WaveDash
+from sequences.halfflip import HalfFlip
 from util.game_state import GameState
 
 
-class Element(BaseAgent):
+class WinYour1s(BaseAgent):
     def __init__(self, name, team, index):
         super().__init__(name, team, index)
         self.obs_builder = CustomObs(cars=2)
@@ -22,7 +24,9 @@ class Element(BaseAgent):
         self.ticks = 0
         self.prev_time = 0
         self.kickoff_seq = None
-        print('Element Ready - Index:', index)
+        self.wavedash_seq = WaveDash()
+        self.halfflip_seq = HalfFlip()
+        print('WinYour1s Ready - Index:', index)
 
     def is_hot_reload_enabled(self):
         return True
@@ -36,6 +40,8 @@ class Element(BaseAgent):
         self.controls = SimpleControllerState()
         self.action = np.zeros(8)
         self.kickoff_seq = None
+        self.wavedash_seq = WaveDash()
+        self.halfflip_seq = HalfFlip()
 
     def get_output(self, packet: GameTickPacket) -> SimpleControllerState:
         cur_time = packet.game_info.seconds_elapsed
@@ -60,9 +66,36 @@ class Element(BaseAgent):
                     self.update_controls(self.action)
                     return self.controls
             except:
-                print('Element - Kickoff sequence failed, falling back to model')
+                print('WinYour1s - Kickoff sequence failed, falling back to model')
         else:
             self.kickoff_seq = None
+
+        # Check for flashy mechanics (WaveDash)
+        player = self.game_state.players[self.index]
+        if self.wavedash_seq.is_valid(player, self.game_state) and self.wavedash_seq.is_finished():
+            # Trigger wavedash if conditions are met and the sequence is not running
+            # For simplicity, we'll trigger it when the bot is near the ball and needs a quick speed boost
+            ball_dist = np.linalg.norm(self.game_state.ball.position - player.car_data.position)
+            if ball_dist < 1000 and np.linalg.norm(player.car_data.linear_velocity) < 1000:
+                self.wavedash_seq.reset()
+
+        # Check for flashy mechanics (HalfFlip)
+        if self.halfflip_seq.is_valid(player, self.game_state) and self.halfflip_seq.is_finished():
+            # Trigger halfflip if the bot is moving slowly and needs to turn around
+            # The condition for moving backward is complex, so we'll simplify the trigger for now.
+            # A full implementation would require more complex vector math.
+            if np.linalg.norm(player.car_data.linear_velocity) < 500 and player.car_data.position[2] < 50: # Simple trigger: slow and on ground
+                self.halfflip_seq.reset()
+
+        if not self.halfflip_seq.is_finished():
+            self.action = np.asarray(self.halfflip_seq.get_action(player, self.game_state, self.action))
+            self.update_controls(self.action)
+            return self.controls
+
+        if not self.wavedash_seq.is_finished():
+            self.action = np.asarray(self.wavedash_seq.get_action(player, self.game_state, self.action))
+            self.update_controls(self.action)
+            return self.controls
 
 
         # We calculate the next action as soon as the prev action is sent
