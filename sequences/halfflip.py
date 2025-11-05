@@ -4,77 +4,130 @@ from util.game_state import GameState, PlayerData
 from sequences.sequence import Sequence
 
 class HalfFlip(Sequence):
+    """
+    HalfFlip mechanic: Backflip + flip cancel + air roll
+    Used for quick 180-degree turns when moving backward or wrong direction.
+    Fixed version: Uses state-based logic instead of time-based.
+    """
     def __init__(self):
-        self.step = 0
-        self.flip_time = 0.0
-        self.cancel_time = 0.0
-        self.roll_time = 0.0
-        self.flip_duration = 0.15
-        self.cancel_duration = 0.05
-        self.roll_duration = 0.5
+        self.state = 'idle'
+        self.initial_height = 0.0
+        self.flip_started = False
+        self.cancel_applied = False
 
     def is_valid(self, player: PlayerData, game_state: GameState) -> bool:
-        # A half-flip is useful when the car is on the ground and needs to quickly turn around.
-        # Check if the car is on the ground and moving backward.
-        on_ground = player.car_data.position[2] < 50
-        speed = np.linalg.norm(player.car_data.linear_velocity)
+        """Check if halfflip can be executed"""
+        # Must be in idle state
+        if self.state != 'idle':
+            return False
         
-        # Check if the car is moving backward (dot product of velocity and forward vector is negative)
-        # For simplicity, we'll just check if speed is low and the car is on the ground.
-        # A proper implementation would check the direction of travel.
-        is_moving_slowly = speed < 500
+        # Must be on ground
+        on_ground = player.on_ground
         
-        return on_ground and is_moving_slowly and player.car_data.has_jump
+        # Must have flip available
+        has_flip = player.has_flip
+        
+        # Check if car is moving backward relative to its forward vector
+        car = player.car_data
+        velocity = car.linear_velocity
+        forward = car.forward()
+        
+        # Dot product: negative means moving backward
+        velocity_forward = np.dot(velocity, forward)
+        moving_backward = velocity_forward < -200  # Moving backward at >200 uu/s
+        
+        # Alternative: Check if we want to turn around (moving wrong direction)
+        speed = np.linalg.norm(velocity)
+        moving_slowly = speed < 600
+        
+        # Halfflip is valid if moving backward OR moving slowly and want to turn around
+        should_halfflip = on_ground and has_flip and (moving_backward or moving_slowly)
+        
+        return should_halfflip
 
     def get_action(self, player: PlayerData, game_state: GameState, prev_action: np.ndarray) -> List:
-        # Reset sequence if it's the first step
-        if self.step == 0:
-            self.flip_time = game_state.time
-            self.step = 1
-            
-        controls = prev_action.copy()
+        """Execute halfflip sequence based on physics state"""
+        car = player.car_data
         
-        # Step 1: Backflip (Jump + Pitch Back)
-        if self.step == 1:
-            controls[5] = 1.0 # Jump
-            controls[2] = 1.0 # Pitch back
-            
-            if game_state.time - self.flip_time >= self.flip_duration:
-                self.cancel_time = game_state.time
-                self.step = 2
+        if self.state == 'idle':
+            # Start sequence - first jump
+            self.state = 'first_jump'
+            self.initial_height = car.position[2]
+            self.flip_started = False
+            self.cancel_applied = False
+            # Jump
+            return [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
         
-        # Step 2: Flip Cancel (Pitch Forward)
-        elif self.step == 2:
-            controls[5] = 0.0 # Release jump
-            controls[2] = -1.0 # Pitch forward (cancel)
+        elif self.state == 'first_jump':
+            # Wait briefly then initiate backflip
+            if not player.on_ground or car.position[2] > self.initial_height + 5:
+                self.state = 'backflip'
+                self.flip_started = True
+                # Backflip (pitch back + jump)
+                return [1.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+            else:
+                # Hold jump briefly
+                return [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+        
+        elif self.state == 'backflip':
+            # Check if we're rotating backward (pitch is changing)
+            pitch = car.pitch()
             
-            if game_state.time - self.cancel_time >= self.cancel_duration:
-                self.roll_time = game_state.time
-                self.step = 3
+            # Once we've started flipping, apply cancel
+            if not player.on_ground and self.flip_started:
+                self.state = 'cancel'
+                self.cancel_applied = True
+                # Cancel flip (pitch forward hard)
+                return [1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            else:
+                # Continue backflip
+                return [1.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+        
+        elif self.state == 'cancel':
+            # Hold cancel to stop backflip rotation
+            car_upside_down = abs(car.pitch()) > np.pi * 0.4  # Check if close to inverted
+            
+            if car_upside_down and not player.on_ground:
+                self.state = 'air_roll'
+                # Now air roll to land on wheels
+                return [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0]
+            elif player.on_ground:
+                # Landed early - finish
+                self.state = 'idle'
+                return [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            else:
+                # Continue cancel
+                return [1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        
+        elif self.state == 'air_roll':
+            # Air roll to land on wheels
+            if player.on_ground:
+                # Landed - sequence complete
+                self.state = 'idle'
+                return [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+            else:
+                # Check if car is right-side-up
+                up_vector = car.up()
+                is_upright = up_vector[2] > 0.8  # Z component of up vector should be positive
                 
-        # Step 3: Air Roll (Yaw/Roll)
-        elif self.step == 3:
-            controls[2] = 0.0 # Release pitch
-            controls[4] = 1.0 # Roll (or use yaw for a simpler version)
-            
-            if game_state.time - self.roll_time >= self.roll_duration:
-                self.step = 4
-                
-        # Step 4: Finish
-        elif self.step == 4:
-            # Release all controls
-            controls[4] = 0.0 # Roll
-            
-            # Sequence is complete, reset for next time
-            self.step = 0
-            
-        return controls.tolist()
+                if is_upright:
+                    # Stop rolling, prepare to land
+                    return [1.0, 0.0, -0.3, 0.0, 0.0, 0.0, 1.0, 0.0]
+                else:
+                    # Continue air roll
+                    return [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0]
+        
+        # Fallback - should not reach here
+        self.state = 'idle'
+        return prev_action.tolist()
 
     def is_finished(self) -> bool:
-        return self.step == 0
+        """Check if sequence is complete"""
+        return self.state == 'idle'
 
     def reset(self):
-        self.step = 0
-        self.flip_time = 0.0
-        self.cancel_time = 0.0
-        self.roll_time = 0.0
+        """Reset sequence to initial state"""
+        self.state = 'idle'
+        self.initial_height = 0.0
+        self.flip_started = False
+        self.cancel_applied = False

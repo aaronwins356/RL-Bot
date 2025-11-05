@@ -78,3 +78,13 @@ class Speedflip(Sequence):
 
         print("Element - this shouldn't be printed")
         raise AssertionError('State machine didn\'t return a value')
+    
+    def is_finished(self) -> bool:
+        """Check if sequence is complete"""
+        return self.state == 'done'
+    
+    def reset(self):
+        """Reset sequence - Note: Speedflip needs player data to reset properly"""
+        # Speedflip requires player data in __init__, so reset is tricky
+        # Just mark as done for now
+        self.state = 'done'

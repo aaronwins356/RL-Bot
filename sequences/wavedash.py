@@ -2,80 +2,88 @@ import numpy as np
 from typing import List
 from util.game_state import GameState, PlayerData
 from sequences.sequence import Sequence
-from util.common_values import CAR_MAX_SPEED, MAX_CAR_VELOCITY, BOOST_USAGE_PER_SECOND, MAX_BOOST
 
 class WaveDash(Sequence):
+    """
+    WaveDash mechanic: Jump + immediate forward dodge while pitching back
+    Provides quick speed boost (~500 uu/s) when executed correctly.
+    Fixed version: Uses state-based logic instead of time-based.
+    """
     def __init__(self):
-        self.step = 0
-        self.jump_time = 0.0
-        self.dodge_time = 0.0
-        self.duration = 0.15 # Total duration of the dodge part
-        self.jump_duration = 0.05 # Duration of the initial jump
+        self.state = 'idle'
+        self.initial_height = 0.0
+        self.jump_registered = False
 
     def is_valid(self, player: PlayerData, game_state: GameState) -> bool:
-        # Check if the car is on the ground or wall/ceiling and has a flip available
-        # We'll simplify and assume a ground/wall dash for now.
-        # A full implementation would check for a specific angle to the ground/wall.
+        """Check if wavedash can be executed"""
+        # Must be in idle state (not currently executing)
+        if self.state != 'idle':
+            return False
         
-        # Check if car is on the ground or close to it (z-axis)
-        on_ground = player.car_data.position[2] < 50
+        # Must be on ground
+        on_ground = player.on_ground
         
-        # Check if car has a flip available (not on ground and not flipped)
-        has_flip = player.car_data.has_jump and not player.car_data.is_flipped
+        # Must have flip available
+        has_flip = player.has_flip
         
-        # Check if the car is moving fast enough to make a wavedash useful
+        # Must be moving at moderate speed (not too slow, not at max speed)
         speed = np.linalg.norm(player.car_data.linear_velocity)
-        is_fast_enough = speed > 500
+        good_speed = 500 < speed < 1800
         
-        # Only allow a wavedash if we are on the ground/wall and have a flip
-        return (on_ground or player.car_data.is_on_wall) and has_flip and is_fast_enough
+        # Must not be already airborne
+        low_height = player.car_data.position[2] < 50
+        
+        return on_ground and has_flip and good_speed and low_height
 
     def get_action(self, player: PlayerData, game_state: GameState, prev_action: np.ndarray) -> List:
-        # Reset sequence if it's the first step
-        if self.step == 0:
-            self.jump_time = game_state.time
-            self.step = 1
-            
-        controls = prev_action.copy()
+        """Execute wavedash sequence based on physics state"""
+        car = player.car_data
         
-        # Step 1: Jump
-        if self.step == 1:
-            controls[5] = 1.0 # Jump
-            
-            if game_state.time - self.jump_time >= self.jump_duration:
-                self.dodge_time = game_state.time
-                self.step = 2
+        if self.state == 'idle':
+            # Start sequence - initiate jump
+            self.state = 'jumping'
+            self.initial_height = car.position[2]
+            self.jump_registered = False
+            # Jump + boost + pitch back slightly
+            return [1.0, 0.0, 0.3, 0.0, 0.0, 1.0, 1.0, 0.0]
         
-        # Step 2: Dodge (forward or backward)
-        elif self.step == 2:
-            controls[5] = 0.0 # Release jump
+        elif self.state == 'jumping':
+            # Wait for car to leave ground
+            height_gain = car.position[2] - self.initial_height
             
-            # Determine dodge direction based on car's orientation and velocity
-            # For simplicity, we'll assume a forward dash for now.
-            # A proper implementation would use the car's orientation vector.
-            
-            # Forward dodge: pitch = -1.0
-            controls[2] = -1.0 # Pitch
-            controls[5] = 1.0 # Jump (for the dodge)
-            
-            if game_state.time - self.dodge_time >= self.duration:
-                self.step = 3
-                
-        # Step 3: Finish
-        elif self.step == 3:
-            # Release all controls related to the dodge
-            controls[2] = 0.0 # Pitch
-            controls[5] = 0.0 # Jump
-            
-            # Sequence is complete, reset for next time
-            self.step = 0
-            
-        return controls.tolist()
+            if height_gain > 10 or not player.on_ground:
+                # Car is airborne, now dodge forward
+                self.state = 'dodging'
+                self.jump_registered = True
+                # Forward dodge with pitch back (creates wavedash)
+                return [1.0, 0.0, 0.5, 0.0, 0.0, 1.0, 1.0, 0.0]
+            else:
+                # Still waiting to leave ground, hold jump
+                return [1.0, 0.0, 0.3, 0.0, 0.0, 1.0, 1.0, 0.0]
+        
+        elif self.state == 'dodging':
+            # Execute dodge - forward flip with pitch compensation
+            if not player.on_ground and self.jump_registered:
+                # In air, do the dodge
+                return [1.0, 0.0, -1.0, 0.0, 0.0, 1.0, 1.0, 0.0]
+            elif player.on_ground:
+                # Landed - sequence complete
+                self.state = 'idle'
+                return [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+            else:
+                # Still in air
+                return [1.0, 0.0, -0.5, 0.0, 0.0, 0.0, 1.0, 0.0]
+        
+        # Fallback - should not reach here
+        self.state = 'idle'
+        return prev_action.tolist()
 
     def is_finished(self) -> bool:
-        return self.step == 0
+        """Check if sequence is complete"""
+        return self.state == 'idle'
 
     def reset(self):
-        self.step = 0
-        self.jump_time = 0.0
-        self.dodge_time = 0.0
+        """Reset sequence to initial state"""
+        self.state = 'idle'
+        self.initial_height = 0.0
+        self.jump_registered = False
