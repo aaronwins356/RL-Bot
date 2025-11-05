@@ -8,6 +8,8 @@ from sequences.speedflip import Speedflip
 from sequences.wavedash import WaveDash
 from sequences.halfflip import HalfFlip
 from util.game_state import GameState
+from util.ball_prediction import BallPredictor
+from util.boost_manager import BoostManager
 
 
 class WinYour1s(BaseAgent):
@@ -16,7 +18,7 @@ class WinYour1s(BaseAgent):
         self.obs_builder = CustomObs(cars=2)
         self.action_trans = np.array([-1, -1, -1, -1, -1, 0, 0, 0])
         self.agent = Agent(self.obs_builder.obs_size, action_categoricals=5, action_bernoullis=3)
-        self.tick_skip = 8
+        self.tick_skip = 4  # REDUCED from 8 to 4 for faster reactions (30 FPS at 120 tick rate)
         self.game_state: GameState = None
         self.controls = None
         self.action = None
@@ -26,6 +28,8 @@ class WinYour1s(BaseAgent):
         self.kickoff_seq = None
         self.wavedash_seq = WaveDash()
         self.halfflip_seq = HalfFlip()
+        self.ball_predictor = None  # Will be initialized in initialize_agent
+        self.boost_manager = None   # Will be initialized in initialize_agent
         print('WinYour1s Ready - Index:', index)
 
     def is_hot_reload_enabled(self):
@@ -33,7 +37,8 @@ class WinYour1s(BaseAgent):
 
     def initialize_agent(self):
         # Initialize the rlgym GameState object now that the game is active and the info is available
-        self.game_state = GameState(self.get_field_info())
+        field_info = self.get_field_info()
+        self.game_state = GameState(field_info)
         self.update_action = True
         self.ticks = self.tick_skip  # So we take an action the first tick
         self.prev_time = 0
@@ -42,6 +47,12 @@ class WinYour1s(BaseAgent):
         self.kickoff_seq = None
         self.wavedash_seq = WaveDash()
         self.halfflip_seq = HalfFlip()
+        
+        # Initialize SSL-level systems
+        self.ball_predictor = BallPredictor(prediction_horizon=4.0, timestep=1/60)
+        self.boost_manager = BoostManager(field_info)
+        
+        print('WinYour1s - SSL systems initialized: Ball Prediction + Boost Management')
 
     def get_output(self, packet: GameTickPacket) -> SimpleControllerState:
         cur_time = packet.game_info.seconds_elapsed
@@ -51,6 +62,10 @@ class WinYour1s(BaseAgent):
         ticks_elapsed = round(delta * 120)
         self.ticks += ticks_elapsed
         self.game_state.decode(packet, ticks_elapsed)
+        
+        # Update SSL systems
+        if self.boost_manager is not None:
+            self.boost_manager.update(self.game_state, delta)
 
         if packet.game_info.is_kickoff_pause:
             try:
