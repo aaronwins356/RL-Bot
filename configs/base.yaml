@@ -1,24 +1,26 @@
 # Base configuration for RL-Bot hybrid system
 training:
   algorithm: "ppo"  # or "sac"
-  total_timesteps: 10000000
-  batch_size: 4096
-  n_epochs: 10
-  learning_rate: 3.0e-4
+  total_timesteps: 5000000
+  batch_size: 32768
+  n_epochs: 3
+  learning_rate: 8.0e-4
   clip_range: 0.2
-  gamma: 0.99
+  gamma: 0.995
   gae_lambda: 0.95
   vf_coef: 0.5
-  ent_coef: 0.01
+  ent_coef: 0.015
   max_grad_norm: 0.5
+  num_envs: 8
+  rollout_length: 256
   
   # Early stopping - extended patience for better convergence
-  early_stop_patience: 10  # Increased from 5 to 10 evaluations
+  early_stop_patience: 6  # Reduced for efficiency
   
   # Self-play settings
   selfplay:
     enabled: true
-    curriculum_stages: ["1v1", "2v2", "3v3"]
+    curriculum_stages: ["1v1", "1v2", "2v2"]
     opponent_update_freq: 100000  # timesteps
     elo_threshold: 100  # promote model if delta > threshold
 
@@ -31,8 +33,8 @@ training:
 
 network:
   architecture: "mlp"  # "mlp", "cnn", or "cnn_lstm"
-  hidden_sizes: [512, 512, 256]
-  activation: "relu"
+  hidden_sizes: [1024, 512, 256]
+  activation: "elu"
   use_lstm: false
   lstm_hidden_size: 256
   
@@ -68,9 +70,9 @@ inference:
 logging:
   log_dir: "logs"
   tensorboard: true
-  log_interval: 1000  # timesteps
+  log_interval: 2000  # timesteps
   save_interval: 10000  # timesteps
-  eval_interval: 50000  # timesteps
+  eval_interval: 20000  # timesteps
   eval_num_games: 25  # Increased from default 5 to 25 for better Elo estimates
   
 checkpoints:

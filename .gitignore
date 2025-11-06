@@ -49,3 +49,5 @@ htmlcov/
 # Training artifacts
 logs/
 checkpoints/
+test_refactor.py
+REFACTOR_SUMMARY.md
