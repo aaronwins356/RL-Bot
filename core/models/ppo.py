@@ -45,6 +45,27 @@ class PPO:
         self.max_grad_norm = self.config.get("max_grad_norm", 0.5)
         self.n_epochs = self.config.get("n_epochs", 10)
         
+        # Enhanced features
+        self.use_dynamic_lambda = self.config.get("use_dynamic_lambda", True)
+        self.use_entropy_annealing = self.config.get("use_entropy_annealing", True)
+        self.use_reward_scaling = self.config.get("use_reward_scaling", True)
+        
+        # Dynamic GAE lambda
+        self.min_gae_lambda = self.config.get("min_gae_lambda", 0.85)
+        self.max_gae_lambda = self.config.get("max_gae_lambda", 0.98)
+        
+        # Entropy annealing
+        self.initial_ent_coef = self.ent_coef
+        self.min_ent_coef = self.config.get("min_ent_coef", 0.001)
+        self.ent_anneal_rate = self.config.get("ent_anneal_rate", 0.9999)
+        
+        # Reward scaling
+        self.reward_scale = 1.0
+        self.reward_scale_update_freq = self.config.get("reward_scale_update_freq", 10000)
+        self.running_reward_mean = 0.0
+        self.running_reward_std = 1.0
+        self.reward_update_count = 0
+        
         # Optimizer
         self.optimizer = optim.Adam(
             self.model.parameters(),
@@ -59,27 +80,45 @@ class PPO:
             "entropy_loss": [],
             "total_loss": [],
             "clip_fraction": [],
-            "explained_variance": []
+            "explained_variance": [],
+            "gae_lambda": [],
+            "ent_coef": [],
+            "reward_scale": []
         }
+        self.update_count = 0
     
     def compute_gae(
         self,
         rewards: np.ndarray,
         values: np.ndarray,
         dones: np.ndarray,
-        next_value: float
+        next_value: float,
+        explained_variance: Optional[float] = None
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Compute Generalized Advantage Estimation.
+        """Compute Generalized Advantage Estimation with dynamic lambda.
         
         Args:
             rewards: Reward array (T,)
             values: Value estimates (T,)
             dones: Done flags (T,)
             next_value: Value estimate for next state
+            explained_variance: Current explained variance (for dynamic lambda)
             
         Returns:
             Tuple of (advantages, returns)
         """
+        # Dynamic GAE lambda based on explained variance
+        if self.use_dynamic_lambda and explained_variance is not None:
+            # Higher explained variance -> use higher lambda (more future-oriented)
+            # Lower explained variance -> use lower lambda (more present-oriented)
+            lambda_factor = np.clip(explained_variance, 0.0, 1.0)
+            current_lambda = (
+                self.min_gae_lambda + 
+                lambda_factor * (self.max_gae_lambda - self.min_gae_lambda)
+            )
+        else:
+            current_lambda = self.gae_lambda
+        
         advantages = np.zeros_like(rewards)
         last_gae = 0
         
@@ -95,12 +134,75 @@ class PPO:
                 next_value_t = values_ext[t + 1]
             
             delta = rewards[t] + self.gamma * next_value_t - values[t]
-            last_gae = delta + self.gamma * self.gae_lambda * last_gae
+            last_gae = delta + self.gamma * current_lambda * last_gae
             advantages[t] = last_gae
         
         returns = advantages + values
         
+        # Track current lambda
+        if self.use_dynamic_lambda:
+            self.training_stats["gae_lambda"].append(current_lambda)
+        
         return advantages, returns
+    
+    def update_reward_scaling(self, rewards: np.ndarray):
+        """Update reward scaling statistics.
+        
+        Args:
+            rewards: Array of rewards from recent episodes
+        """
+        if not self.use_reward_scaling or len(rewards) == 0:
+            return
+        
+        self.reward_update_count += 1
+        
+        # Update running statistics
+        batch_mean = np.mean(rewards)
+        batch_std = np.std(rewards)
+        
+        # Exponential moving average
+        alpha = 0.01
+        self.running_reward_mean = (
+            alpha * batch_mean + (1 - alpha) * self.running_reward_mean
+        )
+        self.running_reward_std = (
+            alpha * batch_std + (1 - alpha) * self.running_reward_std
+        )
+        
+        # Compute reward scale (inverse of std, clipped)
+        if self.running_reward_std > 0:
+            self.reward_scale = np.clip(
+                1.0 / (self.running_reward_std + 1e-8),
+                0.1,
+                10.0
+            )
+        
+        self.training_stats["reward_scale"].append(self.reward_scale)
+    
+    def scale_rewards(self, rewards: np.ndarray) -> np.ndarray:
+        """Scale rewards using running statistics.
+        
+        Args:
+            rewards: Raw rewards
+            
+        Returns:
+            Scaled rewards
+        """
+        if not self.use_reward_scaling:
+            return rewards
+        
+        # Standardize rewards
+        scaled = (rewards - self.running_reward_mean) / (self.running_reward_std + 1e-8)
+        return scaled
+    
+    def anneal_entropy(self):
+        """Anneal entropy coefficient over time."""
+        if self.use_entropy_annealing:
+            self.ent_coef = max(
+                self.min_ent_coef,
+                self.ent_coef * self.ent_anneal_rate
+            )
+            self.training_stats["ent_coef"].append(self.ent_coef)
     
     def update(
         self,
@@ -200,6 +302,10 @@ class PPO:
             epoch_stats["entropy_loss"].append(entropy_loss.item())
             epoch_stats["total_loss"].append(total_loss.item())
             epoch_stats["clip_fraction"].append(clip_fraction)
+        
+        # Anneal entropy coefficient
+        self.anneal_entropy()
+        self.update_count += 1
         
         # Average stats across epochs
         stats = {k: np.mean(v) for k, v in epoch_stats.items()}

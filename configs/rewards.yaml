@@ -34,6 +34,9 @@ positioning:
   defensive_positioning: 0.05
   offensive_positioning: 0.03
   midfield_control: 0.02
+  field_coverage: 0.04  # reward for covering important field areas
+  stale_positioning: -0.15  # penalty for staying in same position too long
+  spacing_quality: 0.05  # reward for maintaining optimal team spacing
 
 # Dense rewards - Boost management
 boost:
@@ -44,6 +47,8 @@ boost:
   boost_conservation: 0.01
   boost_pickup: 0.1  # general boost collection reward
   boost_waste: -0.02  # penalty for wasting boost
+  boost_economy: 0.03  # reward for smart boost usage/conservation
+  pad_route_efficiency: 0.05  # reward for efficient boost pad routes
 
 # Penalties - Bad behaviors
 penalties:
@@ -70,6 +75,10 @@ aerial:
   aerial_positioning: 0.1  # reward for being in position for aerial
   missed_aerial: -0.3  # penalty for missing aerial attempt
   aerial_efficiency: 0.2  # reward for efficient aerial execution
+  air_control_bonus: 0.15  # bonus for good air control
+  aerial_redirect: 0.8  # bonus for aerial redirects
+  wall_read: 0.4  # bonus for reading ball off wall
+  missed_aerial_with_open_net: -0.8  # severe penalty for missing easy aerial goal
   
 # Context-dependent multipliers
 multipliers:
