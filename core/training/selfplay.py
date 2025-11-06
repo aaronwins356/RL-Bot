@@ -63,71 +63,119 @@ class SelfPlayManager:
             logger.info(f"  Stage {stage.stage_id}: {stage.name} ({stage.game_mode}, {stage.opponent_type})")
     
     def _create_curriculum_stages(self) -> List[CurriculumStage]:
-        """Create the 5-stage curriculum.
+        """Create comprehensive 9-stage curriculum with advanced mechanics.
         
         Returns:
             List of curriculum stages
         """
         stages = [
-            # Stage 1: 1v1 vs basic script
+            # Stage 0: Basic 1v1 ground play
             CurriculumStage(
-                name="Basic 1v1",
+                name="Basic 1v1 Ground Play",
                 stage_id=0,
                 min_timestep=0,
-                max_timestep=1_000_000,
+                max_timestep=500_000,
                 game_mode="1v1",
                 opponent_type="basic_script",
-                difficulty=0.2,
+                difficulty=0.15,
                 rotation_penalty_weight=0.0,
-                speed_multiplier=0.8
+                speed_multiplier=0.7
             ),
-            # Stage 2: 1v1 vs rule policy
+            # Stage 1: Boost management focus
             CurriculumStage(
-                name="Rule Policy 1v1",
+                name="Boost Control & Management",
                 stage_id=1,
-                min_timestep=1_000_000,
-                max_timestep=3_000_000,
+                min_timestep=500_000,
+                max_timestep=1_500_000,
+                game_mode="1v1",
+                opponent_type="rule_policy",
+                difficulty=0.3,
+                rotation_penalty_weight=0.0,
+                speed_multiplier=0.9
+            ),
+            # Stage 2: Kickoff micro-strategy
+            CurriculumStage(
+                name="Kickoff Mastery",
+                stage_id=2,
+                min_timestep=1_500_000,
+                max_timestep=2_500_000,
                 game_mode="1v1",
                 opponent_type="rule_policy",
                 difficulty=0.4,
                 rotation_penalty_weight=0.0,
                 speed_multiplier=1.0
             ),
-            # Stage 3: 2v2 self-play with rotation penalties
+            # Stage 3: Aerial introduction
             CurriculumStage(
-                name="2v2 Self-play (Rotation Focus)",
-                stage_id=2,
-                min_timestep=3_000_000,
-                max_timestep=5_000_000,
-                game_mode="2v2",
+                name="Aerial Basics & Defense",
+                stage_id=3,
+                min_timestep=2_500_000,
+                max_timestep=4_000_000,
+                game_mode="1v1",
                 opponent_type="selfplay",
-                difficulty=0.6,
-                rotation_penalty_weight=0.5,  # Enable rotation penalties
+                difficulty=0.5,
+                rotation_penalty_weight=0.0,
                 speed_multiplier=1.0
             ),
-            # Stage 4: 2v2 vs fast opponents
+            # Stage 4: Advanced aerials
             CurriculumStage(
-                name="2v2 Fast Opponents",
-                stage_id=3,
-                min_timestep=5_000_000,
-                max_timestep=8_000_000,
+                name="Advanced Aerial Play",
+                stage_id=4,
+                min_timestep=4_000_000,
+                max_timestep=5_500_000,
                 game_mode="2v2",
-                opponent_type="fast_opponent",
+                opponent_type="selfplay",
+                difficulty=0.65,
+                rotation_penalty_weight=0.2,
+                speed_multiplier=1.0
+            ),
+            # Stage 5: 2v2 rotation and positioning
+            CurriculumStage(
+                name="2v2 Rotation Focus",
+                stage_id=5,
+                min_timestep=5_500_000,
+                max_timestep=7_000_000,
+                game_mode="2v2",
+                opponent_type="selfplay",
+                difficulty=0.7,
+                rotation_penalty_weight=0.6,
+                speed_multiplier=1.0
+            ),
+            # Stage 6: 1v2 defense scenarios
+            CurriculumStage(
+                name="1v2 Defensive Training",
+                stage_id=6,
+                min_timestep=7_000_000,
+                max_timestep=8_500_000,
+                game_mode="1v2",
+                opponent_type="checkpoint",
                 difficulty=0.8,
                 rotation_penalty_weight=0.3,
-                speed_multiplier=1.2  # 20% faster opponents
+                speed_multiplier=1.1
             ),
-            # Stage 5: 3v3 chaos/self-play
+            # Stage 7: Fast-paced 3v3 
             CurriculumStage(
-                name="3v3 Chaos",
-                stage_id=4,
-                min_timestep=8_000_000,
-                max_timestep=float('inf'),
+                name="3v3 Team Play",
+                stage_id=7,
+                min_timestep=8_500_000,
+                max_timestep=10_000_000,
                 game_mode="3v3",
                 opponent_type="selfplay",
-                difficulty=1.0,
-                rotation_penalty_weight=0.7,  # Heavy rotation penalties for 3v3
+                difficulty=0.9,
+                rotation_penalty_weight=0.7,
                 speed_multiplier=1.0
+            ),
+            # Stage 8: Pro-level chaos
+            CurriculumStage(
+                name="Pro-Level 3v3 Chaos",
+                stage_id=8,
+                min_timestep=10_000_000,
+                max_timestep=float('inf'),
+                game_mode="3v3",
+                opponent_type="checkpoint",
+                difficulty=1.0,
+                rotation_penalty_weight=0.8,
+                speed_multiplier=1.15
             ),
         ]
         

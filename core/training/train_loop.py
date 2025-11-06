@@ -47,6 +47,11 @@ class TrainingLoop:
         self.checkpoint_path = checkpoint_path
         self.seed = seed
         
+        # Debug mode flag
+        self.debug_mode = config.raw_config.get('training', {}).get('debug_mode', False)
+        if self.debug_mode:
+            logger.info("DEBUG MODE ENABLED - Detailed logging active")
+        
         # Set random seeds if provided
         if seed is not None:
             torch.manual_seed(seed)
