@@ -45,3 +45,7 @@ htmlcov/
 
 # Temporary files
 /tmp/
+
+# Training artifacts
+logs/
+checkpoints/

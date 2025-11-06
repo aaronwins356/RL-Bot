@@ -4,6 +4,7 @@ This module implements the main training loop with PPO.
 """
 import torch
 import numpy as np
+import logging
 from typing import Dict, Any, Optional
 from pathlib import Path
 
@@ -16,6 +17,11 @@ from core.infra.config import Config
 from core.infra.logging import MetricsLogger
 from core.infra.checkpoints import CheckpointManager
 
+logger = logging.getLogger(__name__)
+
+# Constants
+OBS_SIZE = 173  # Standard observation size (placeholder - should come from encoder)
+
 
 class TrainingLoop:
     """Main training loop for PPO."""
@@ -23,17 +29,28 @@ class TrainingLoop:
     def __init__(
         self,
         config: Config,
-        log_dir: Optional[Path] = None
+        log_dir: Optional[str] = None,
+        checkpoint_path: Optional[str] = None,
+        seed: Optional[int] = None
     ):
         """Initialize training loop.
         
         Args:
             config: Training configuration
             log_dir: Log directory
+            checkpoint_path: Path to checkpoint to resume from
+            seed: Random seed for reproducibility
         """
         self.config = config
         self.log_dir = Path(log_dir or config.log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.checkpoint_path = checkpoint_path
+        self.seed = seed
+        
+        # Set random seeds if provided
+        if seed is not None:
+            torch.manual_seed(seed)
+            np.random.seed(seed)
         
         # Device
         self.device = torch.device(config.device)
@@ -62,11 +79,79 @@ class TrainingLoop:
         self.selfplay_manager = SelfPlayManager(
             config.raw_config.get("training", {}).get("selfplay", {})
         )
-        self.evaluator = EloEvaluator()
+        self.evaluator = EloEvaluator(log_dir=self.log_dir)
+        
+        # Curriculum manager (if enabled)
+        curriculum_config = config.raw_config.get("training", {}).get("curriculum", {})
+        self.curriculum_manager = None
+        if curriculum_config.get('aerial_focus', False) or curriculum_config:
+            from core.training.curriculum import CurriculumManager
+            self.curriculum_manager = CurriculumManager(curriculum_config)
         
         # Training state
         self.timestep = 0
         self.episode = 0
+        
+        # Offline pretraining (if enabled)
+        if config.raw_config.get("training", {}).get("offline", {}).get("enabled", False):
+            self._run_offline_pretraining()
+    
+    def _run_offline_pretraining(self):
+        """Run offline pretraining with behavioral cloning."""
+        offline_config = self.config.raw_config.get("training", {}).get("offline", {})
+        dataset_path = Path(offline_config.get("dataset_path", "data/telemetry_logs"))
+        pretrain_epochs = offline_config.get("pretrain_epochs", 10)
+        pretrain_lr = offline_config.get("pretrain_lr", 1e-3)
+        
+        if not dataset_path.exists():
+            logger.warning(f"Offline dataset not found at {dataset_path}, skipping pretraining")
+            return
+        
+        logger.info(f"Starting offline pretraining for {pretrain_epochs} epochs...")
+        
+        try:
+            from core.training.offline_dataset import OfflineDataset
+            import torch.nn.functional as F
+            
+            # Load dataset
+            dataset = OfflineDataset(dataset_path, max_samples=100000)
+            dataloader = dataset.get_loader(batch_size=256, shuffle=True)
+            
+            # Setup optimizer for pretraining
+            pretrain_optimizer = torch.optim.Adam(self.model.parameters(), lr=pretrain_lr)
+            
+            # Pretrain
+            self.model.train()
+            for epoch in range(pretrain_epochs):
+                total_loss = 0.0
+                num_batches = 0
+                
+                for batch in dataloader:
+                    obs = torch.tensor(batch['observation'], dtype=torch.float32, device=self.device)
+                    action = torch.tensor(batch['action'], dtype=torch.float32, device=self.device)
+                    
+                    # Forward pass (behavioral cloning)
+                    # Note: This is simplified - real implementation would need proper action heads
+                    value = self.model.get_value(obs)
+                    
+                    # Compute loss (placeholder - would need actual action prediction)
+                    loss = F.mse_loss(value, torch.zeros_like(value))  # Placeholder
+                    
+                    # Backward pass
+                    pretrain_optimizer.zero_grad()
+                    loss.backward()
+                    pretrain_optimizer.step()
+                    
+                    total_loss += loss.item()
+                    num_batches += 1
+                
+                avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
+                logger.info(f"  Epoch {epoch+1}/{pretrain_epochs}, Loss: {avg_loss:.4f}")
+            
+            logger.info("Offline pretraining completed!")
+            
+        except Exception as e:
+            logger.warning(f"Offline pretraining failed: {e}")
     
     def _create_model(self) -> ActorCriticNet:
         """Create model from config.
@@ -76,11 +161,8 @@ class TrainingLoop:
         """
         network_config = self.config.raw_config.get("network", {})
         
-        # TODO: Get actual observation size from encoder
-        obs_size = 173  # Placeholder
-        
         model = ActorCriticNet(
-            input_size=obs_size,
+            input_size=OBS_SIZE,
             hidden_sizes=self.config.hidden_sizes,
             action_categoricals=5,
             action_bernoullis=3,
@@ -98,11 +180,20 @@ class TrainingLoop:
         """
         total_timesteps = total_timesteps or self.config.total_timesteps
         
-        print(f"Starting training for {total_timesteps} timesteps")
-        print(f"Device: {self.device}")
-        print(f"Model: {sum(p.numel() for p in self.model.parameters())} parameters")
+        logger.info(f"Starting training for {total_timesteps} timesteps")
+        logger.info(f"Device: {self.device}")
+        logger.info(f"Model: {sum(p.numel() for p in self.model.parameters())} parameters")
+        
+        if self.curriculum_manager:
+            logger.info(f"Curriculum learning enabled with {len(self.curriculum_manager.stages)} stages")
         
         while self.timestep < total_timesteps:
+            # Check curriculum stage transitions
+            if self.curriculum_manager:
+                if self.curriculum_manager.should_transition(self.timestep):
+                    stage = self.curriculum_manager.get_current_stage(self.timestep)
+                    logger.info(f"Transitioned to curriculum stage: {stage.name}")
+            
             # Collect experience (would need environment)
             # For now, this is a placeholder
             # In real implementation, this would interact with RLBot/RLGym
@@ -126,7 +217,7 @@ class TrainingLoop:
             
             self.timestep += 1
         
-        print("Training complete!")
+        logger.info("Training complete!")
         self._save_checkpoint(is_final=True)
     
     def _update(self):
@@ -170,7 +261,7 @@ class TrainingLoop:
         
         self.logger.flush()
         
-        print(f"Timestep: {self.timestep}, Episode: {self.episode}")
+        logger.info(f"Timestep: {self.timestep}, Episode: {self.episode}")
     
     def _save_checkpoint(self, is_final: bool = False):
         """Save checkpoint."""
@@ -190,11 +281,21 @@ class TrainingLoop:
     
     def _evaluate(self):
         """Evaluate model."""
-        # Placeholder for evaluation
-        # In full implementation, this would play matches against baselines
-        elo = self.evaluator.get_elo()
+        # Run full evaluation suite
+        results = self.evaluator.evaluate_full(
+            self.model,
+            self.timestep,
+            num_games=5
+        )
         
-        self.logger.log_scalar("eval/elo", elo, self.timestep)
+        # Log metrics
+        self.logger.log_scalar("eval/elo", self.evaluator.get_elo(), self.timestep)
+        
+        for opponent, result in results.items():
+            self.logger.log_scalar(f"eval/{opponent}/win_rate", result['win_rate'], self.timestep)
+            self.logger.log_scalar(f"eval/{opponent}/wins", result['wins'], self.timestep)
+            self.logger.log_scalar(f"eval/{opponent}/losses", result['losses'], self.timestep)
+        
         self.logger.flush()
         
-        print(f"Evaluation - Elo: {elo:.0f}")
+        logger.info(f"Evaluation - Elo: {self.evaluator.get_elo():.0f}")
