@@ -124,7 +124,11 @@ class ReplayBuffer:
                 "actions": np.array([]),
                 "rewards": np.array([]),
                 "next_observations": np.array([]),
-                "dones": np.array([])
+                "dones": np.array([]),
+                "cat_actions": [],
+                "ber_actions": [],
+                "cat_log_probs": [],
+                "ber_log_probs": []
             }
         
         # Get recent experiences until done or max_length
@@ -133,7 +137,11 @@ class ReplayBuffer:
             "actions": [],
             "rewards": [],
             "next_observations": [],
-            "dones": []
+            "dones": [],
+            "cat_actions": [],
+            "ber_actions": [],
+            "cat_log_probs": [],
+            "ber_log_probs": []
         }
         
         # Iterate backwards to get most recent trajectory
@@ -143,8 +151,24 @@ class ReplayBuffer:
             trajectory["observations"].insert(0, exp["observation"])
             trajectory["actions"].insert(0, exp["action"])
             trajectory["rewards"].insert(0, exp["reward"])
-            trajectory["next_observations"].insert(0, exp["next_observation"])
+            # Handle next_observation - use current obs if not stored
+            if "next_observation" in exp:
+                next_obs = exp["next_observation"]
+            else:
+                next_obs = exp["observation"]
+                # Note: Using current obs as fallback - this may affect temporal accuracy
+            trajectory["next_observations"].insert(0, next_obs)
             trajectory["dones"].insert(0, exp["done"])
+            
+            # Handle new PPO-specific fields
+            if "cat_actions" in exp:
+                trajectory["cat_actions"].insert(0, exp["cat_actions"])
+            if "ber_actions" in exp:
+                trajectory["ber_actions"].insert(0, exp["ber_actions"])
+            if "cat_log_probs" in exp:
+                trajectory["cat_log_probs"].insert(0, exp["cat_log_probs"])
+            if "ber_log_probs" in exp:
+                trajectory["ber_log_probs"].insert(0, exp["ber_log_probs"])
             
             if exp["done"]:
                 break
@@ -153,13 +177,22 @@ class ReplayBuffer:
                 break
         
         # Convert to numpy arrays
-        return {
+        result = {
             "observations": np.array(trajectory["observations"]),
             "actions": np.array(trajectory["actions"]),
             "rewards": np.array(trajectory["rewards"]),
             "next_observations": np.array(trajectory["next_observations"]),
             "dones": np.array(trajectory["dones"])
         }
+        
+        # Add PPO-specific fields if present
+        if trajectory["cat_actions"]:
+            result["cat_actions"] = trajectory["cat_actions"]
+            result["ber_actions"] = trajectory["ber_actions"]
+            result["cat_log_probs"] = trajectory["cat_log_probs"]
+            result["ber_log_probs"] = trajectory["ber_log_probs"]
+        
+        return result
     
     def clear(self):
         """Clear the buffer."""

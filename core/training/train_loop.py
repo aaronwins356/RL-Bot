@@ -20,7 +20,7 @@ from core.infra.checkpoints import CheckpointManager
 logger = logging.getLogger(__name__)
 
 # Constants
-OBS_SIZE = 173  # Standard observation size (placeholder - should come from encoder)
+OBS_SIZE = 180  # Standard observation size from ObservationEncoder
 DEFAULT_EVAL_GAMES = 25  # Default number of games per opponent during evaluation
 
 
@@ -58,9 +58,12 @@ class TrainingLoop:
             torch.manual_seed(seed)
             np.random.seed(seed)
         
-        # Device - check CUDA availability
+        # Device - check CUDA availability and handle "auto"
         device_str = config.device
-        if device_str == "cuda" and not torch.cuda.is_available():
+        if device_str == "auto":
+            device_str = "cuda" if torch.cuda.is_available() else "cpu"
+            logger.info(f"Auto-detected device: {device_str}")
+        elif device_str == "cuda" and not torch.cuda.is_available():
             logger.warning("CUDA requested but not available, falling back to CPU")
             device_str = "cpu"
         self.device = torch.device(device_str)
@@ -266,21 +269,34 @@ class TrainingLoop:
                 # Calculate action entropy for logging
                 action_entropy = 0.0
                 
-                # Sample actions
+                # Sample actions - cat_probs has shape (batch=1, n_cat, n_cat_options)
+                # ber_probs has shape (batch=1, n_ber, 2)
+                # where n_cat_options is typically 3 for discrete actions
                 cat_actions = []
-                for probs in cat_probs:
+                cat_log_probs = []
+                cat_probs_batch = cat_probs[0]  # Get first (only) batch element -> (n_cat, n_cat_options)
+                for i in range(cat_probs_batch.shape[0]):
+                    probs = cat_probs_batch[i]  # Shape: (n_cat_options,)
                     cat_dist = torch.distributions.Categorical(probs)
-                    cat_actions.append(cat_dist.sample().item())
+                    action_sample = cat_dist.sample()
+                    cat_actions.append(action_sample.item())
+                    cat_log_probs.append(cat_dist.log_prob(action_sample).item())
                     action_entropy += cat_dist.entropy().item()
                 
                 ber_actions = []
-                for probs in ber_probs:
-                    ber_dist = torch.distributions.Bernoulli(probs)
-                    ber_actions.append(ber_dist.sample().item())
+                ber_log_probs = []
+                ber_probs_batch = ber_probs[0]  # Get first (only) batch element -> (n_ber, 2)
+                for i in range(ber_probs_batch.shape[0]):
+                    probs = ber_probs_batch[i]  # Shape: (2,) - [prob_0, prob_1]
+                    # Bernoulli takes probability of action=1
+                    ber_dist = torch.distributions.Bernoulli(probs[1])
+                    action_sample = ber_dist.sample()
+                    ber_actions.append(int(action_sample.item()))
+                    ber_log_probs.append(ber_dist.log_prob(action_sample).item())
                     action_entropy += ber_dist.entropy().item()
                 
                 # Average entropy
-                num_actions = len(cat_probs) + len(ber_probs)
+                num_actions = cat_probs_batch.shape[0] + ber_probs_batch.shape[0]
                 avg_action_entropy = action_entropy / max(1, num_actions)
                 
                 # Convert to action array
@@ -302,10 +318,14 @@ class TrainingLoop:
             next_obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
             
-            # Store in buffer
+            # Store in buffer with all PPO-required information
             self.buffer.add({
                 'observation': obs,
                 'action': action,
+                'cat_actions': np.array(cat_actions),
+                'ber_actions': np.array(ber_actions),
+                'cat_log_probs': np.array(cat_log_probs),
+                'ber_log_probs': np.array(ber_log_probs),
                 'reward': reward,
                 'done': done,
                 'value': value.item(),
@@ -369,23 +389,122 @@ class TrainingLoop:
         if len(trajectory["observations"]) == 0:
             return
         
-        # Convert to tensors
-        obs = torch.tensor(trajectory["observations"], dtype=torch.float32, device=self.device)
-        rewards = trajectory["rewards"]
-        dones = trajectory["dones"]
+        # Check if we have enough data
+        if len(trajectory["observations"]) < 32:  # Minimum batch size
+            return
         
-        # Compute values
+        # Convert to tensors
+        obs = torch.tensor(
+            np.array(trajectory["observations"]), 
+            dtype=torch.float32, 
+            device=self.device
+        )
+        
+        # Extract actions and log probs (if available)
+        # For backward compatibility, check if new format exists
+        if "cat_actions" in trajectory and len(trajectory["cat_actions"]) > 0:
+            cat_actions = torch.tensor(
+                np.array([exp for exp in trajectory["cat_actions"]]),
+                dtype=torch.long,
+                device=self.device
+            )
+            ber_actions = torch.tensor(
+                np.array([exp for exp in trajectory["ber_actions"]]),
+                dtype=torch.long,
+                device=self.device
+            )
+            old_log_probs_cat = torch.tensor(
+                np.array([exp for exp in trajectory["cat_log_probs"]]),
+                dtype=torch.float32,
+                device=self.device
+            )
+            old_log_probs_ber = torch.tensor(
+                np.array([exp for exp in trajectory["ber_log_probs"]]),
+                dtype=torch.float32,
+                device=self.device
+            )
+            # Extract old values from trajectory (stored in buffer)
+            # Use itertools.islice for efficient deque slicing without full conversion
+            from itertools import islice
+            n_traj = len(trajectory["observations"])
+            start_idx = max(0, len(self.buffer.buffer) - n_traj)
+            old_values_list = [
+                exp['value'] for exp in islice(self.buffer.buffer, start_idx, None) 
+                if 'value' in exp
+            ]
+            old_values = torch.tensor(
+                np.array(old_values_list),
+                dtype=torch.float32,
+                device=self.device
+            )
+        else:
+            # Old format without stored actions - skip update
+            logger.warning("Buffer missing action/log_prob data, skipping PPO update")
+            return
+        
+        rewards = np.array(trajectory["rewards"])
+        dones = np.array(trajectory["dones"])
+        
+        # Compute values for all observations
         with torch.no_grad():
             values = self.model.get_value(obs).cpu().numpy().squeeze()
         
-        # Compute advantages and returns
-        next_value = values[-1] if len(values) > 0 else 0.0
+        # For GAE, we need values for current states and next state
+        # Since we have values for all current states, we use the last one as next_value
+        # and pass all values to GAE (it will handle bootstrapping internally)
+        next_value = 0.0  # Bootstrap value (will be overridden by values_ext in GAE)
+        
+        # Get current explained variance for dynamic lambda (use all values)
+        if len(values) > 1 and len(rewards) > 1:
+            var_y = np.var(rewards)
+            # For explained variance, compare rewards with corresponding value estimates
+            min_len = min(len(rewards), len(values))
+            explained_var = 1 - np.var(rewards[:min_len] - values[:min_len]) / (var_y + 1e-8) if var_y > 0 else 0
+        else:
+            explained_var = None
+        
         advantages, returns = self.ppo.compute_gae(
-            rewards, values[:-1] if len(values) > 1 else np.array([]), dones, next_value
+            rewards, values, dones, next_value, explained_var
         )
         
-        # For now, skip actual PPO update (would need proper action log probs)
-        # In full implementation, this would call ppo.update()
+        # Convert to tensors
+        advantages_tensor = torch.tensor(advantages, dtype=torch.float32, device=self.device)
+        returns_tensor = torch.tensor(returns, dtype=torch.float32, device=self.device)
+        
+        # Perform PPO update
+        try:
+            stats = self.ppo.update(
+                obs,
+                cat_actions,
+                ber_actions,
+                old_log_probs_cat,
+                old_log_probs_ber,
+                advantages_tensor,
+                returns_tensor,
+                old_values
+            )
+            
+            # Log update stats
+            if self.debug_mode:
+                logger.debug(
+                    f"PPO update | policy_loss={stats['policy_loss']:.4f} | "
+                    f"value_loss={stats['value_loss']:.4f} | "
+                    f"entropy_loss={stats['entropy_loss']:.4f} | "
+                    f"explained_var={stats['explained_variance']:.4f}"
+                )
+            
+            # Validate scalar losses (accept numpy scalars too)
+            assert np.isscalar(stats['policy_loss']), \
+                f"Policy loss not scalar: {type(stats['policy_loss'])}"
+            assert np.isscalar(stats['value_loss']), \
+                f"Value loss not scalar: {type(stats['value_loss'])}"
+            assert np.isscalar(stats['explained_variance']), \
+                f"Explained variance not scalar: {type(stats['explained_variance'])}"
+            
+        except Exception as e:
+            logger.error(f"PPO update failed: {e}")
+            if self.debug_mode:
+                raise
     
     def _log_progress(self):
         """Log training progress."""
