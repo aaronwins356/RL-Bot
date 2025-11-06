@@ -161,38 +161,6 @@ def generate_run_name(config_dict: dict, args: argparse.Namespace) -> str:
     parts.append(config_hash)
     
     return '_'.join(parts)
-    
-    Returns:
-        Dictionary with git info
-    """
-    try:
-        commit_hash = subprocess.check_output(
-            ['git', 'rev-parse', 'HEAD'],
-            stderr=subprocess.DEVNULL
-        ).decode().strip()
-        
-        branch = subprocess.check_output(
-            ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
-            stderr=subprocess.DEVNULL
-        ).decode().strip()
-        
-        # Check if there are uncommitted changes
-        dirty = subprocess.call(
-            ['git', 'diff-index', '--quiet', 'HEAD', '--'],
-            stderr=subprocess.DEVNULL
-        ) != 0
-        
-        return {
-            'commit_hash': commit_hash,
-            'branch': branch,
-            'dirty': dirty
-        }
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return {
-            'commit_hash': 'unknown',
-            'branch': 'unknown',
-            'dirty': False
-        }
 
 
 def save_run_metadata(log_dir: Path, config_dict: dict, args: argparse.Namespace):
