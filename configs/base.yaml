@@ -1,0 +1,81 @@
+# Base configuration for RL-Bot hybrid system
+training:
+  algorithm: "ppo"  # or "sac"
+  total_timesteps: 10000000
+  batch_size: 4096
+  n_epochs: 10
+  learning_rate: 3.0e-4
+  clip_range: 0.2
+  gamma: 0.99
+  gae_lambda: 0.95
+  vf_coef: 0.5
+  ent_coef: 0.01
+  max_grad_norm: 0.5
+  
+  # Self-play settings
+  selfplay:
+    enabled: true
+    curriculum_stages: ["1v1", "2v2", "3v3"]
+    opponent_update_freq: 100000  # timesteps
+    elo_threshold: 100  # promote model if delta > threshold
+
+  # Offline training (BC pretraining)
+  offline:
+    enabled: false
+    dataset_path: "data/telemetry_logs"
+    pretrain_epochs: 10
+    pretrain_lr: 1.0e-3
+
+network:
+  architecture: "mlp"  # "mlp", "cnn", or "cnn_lstm"
+  hidden_sizes: [512, 512, 256]
+  activation: "relu"
+  use_lstm: false
+  lstm_hidden_size: 256
+  
+  # Observation encoder
+  encoder:
+    normalize: true
+    include_history: false
+    history_length: 4
+
+policy:
+  type: "hybrid"  # "rule", "ml", or "hybrid"
+  
+  # Hybrid policy settings
+  hybrid:
+    use_rules_on_kickoff: true
+    use_rules_on_low_confidence: true
+    confidence_threshold: 0.7
+    ood_detection: "entropy"  # "entropy", "mahalanobis", or "autoencoder"
+    ood_threshold: 2.0
+    fallback_on_saturation: true
+
+  # Rule policy settings
+  rules:
+    aggressive: false
+    boost_conservation: true
+    safe_rotation: true
+
+inference:
+  device: "cpu"  # "cpu" or "cuda"
+  batch_size: 1
+  frame_budget_ms: 8.0  # max time for inference (120Hz = 8.33ms per tick)
+
+logging:
+  log_dir: "logs"
+  tensorboard: true
+  log_interval: 1000  # timesteps
+  save_interval: 10000  # timesteps
+  eval_interval: 50000  # timesteps
+  
+checkpoints:
+  save_dir: "checkpoints"
+  keep_best_n: 5
+  keep_latest: true
+
+telemetry:
+  enabled: true
+  buffer_size: 100000
+  save_interval: 10000
+  save_path: "data/telemetry"
