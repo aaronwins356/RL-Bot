@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 OBS_SIZE = 173  # Standard observation size (placeholder - should come from encoder)
+DEFAULT_EVAL_GAMES = 25  # Default number of games per opponent during evaluation
 
 
 class TrainingLoop:
@@ -213,6 +214,20 @@ class TrainingLoop:
         if forced_stage is not None:
             logger.info(f"Forcing curriculum stage: {forced_stage}")
         
+        # Create environment for experience collection
+        from core.env.rocket_sim_env import RocketSimEnv
+        from pathlib import Path
+        env = RocketSimEnv(
+            reward_config_path=Path("configs/rewards.yaml"),
+            simulation_mode=True,
+            debug_mode=self.debug_mode
+        )
+        
+        # Episode state
+        obs = env.reset()
+        episode_reward = 0.0
+        episode_length = 0
+        
         while self.timestep < total_timesteps:
             # Check for early stopping
             if self.early_stop_counter >= self.early_stop_patience:
@@ -243,9 +258,86 @@ class TrainingLoop:
             # Get current stage config
             stage_config = self.selfplay_manager.get_stage_config(self.timestep)
             
-            # Collect experience (would need environment)
-            # For now, this is a placeholder
-            # In real implementation, this would interact with RLBot/RLGym
+            # Collect experience step
+            with torch.no_grad():
+                obs_tensor = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+                cat_probs, ber_probs, value, _, _ = self.model(obs_tensor)
+                
+                # Calculate action entropy for logging
+                action_entropy = 0.0
+                
+                # Sample actions
+                cat_actions = []
+                for probs in cat_probs:
+                    cat_dist = torch.distributions.Categorical(probs)
+                    cat_actions.append(cat_dist.sample().item())
+                    action_entropy += cat_dist.entropy().item()
+                
+                ber_actions = []
+                for probs in ber_probs:
+                    ber_dist = torch.distributions.Bernoulli(probs)
+                    ber_actions.append(ber_dist.sample().item())
+                    action_entropy += ber_dist.entropy().item()
+                
+                # Average entropy
+                num_actions = len(cat_probs) + len(ber_probs)
+                avg_action_entropy = action_entropy / max(1, num_actions)
+                
+                # Convert to action array
+                # Categorical actions are typically 0-4 (5 options), so we map to [-1, 1]
+                # For example: 0->-1, 1->-0.5, 2->0, 3->0.5, 4->1
+                # Formula: (action - 2) / 2.0 maps [0,4] to [-1,1]
+                action = np.array([
+                    (cat_actions[0] - 2) / 2.0,  # throttle: map [0,4] to [-1,1]
+                    (cat_actions[1] - 2) / 2.0,  # steer: map [0,4] to [-1,1]
+                    0.0,  # pitch (not used in 2D simulation)
+                    0.0,  # yaw (not used in 2D simulation)
+                    0.0,  # roll (not used in 2D simulation)
+                    ber_actions[0],  # jump: binary 0/1
+                    ber_actions[1],  # boost: binary 0/1
+                    ber_actions[2] if len(ber_actions) > 2 else 0.0,  # handbrake: binary 0/1
+                ])
+            
+            # Step environment
+            next_obs, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
+            
+            # Store in buffer
+            self.buffer.add({
+                'observation': obs,
+                'action': action,
+                'reward': reward,
+                'done': done,
+                'value': value.item(),
+                'entropy': avg_action_entropy
+            })
+            
+            episode_reward += reward
+            episode_length += 1
+            
+            # Log action entropy periodically
+            if self.timestep % 100 == 0:
+                self.logger.log_scalar("train/action_entropy", avg_action_entropy, self.timestep)
+            
+            obs = next_obs
+            
+            # Episode done
+            if done:
+                self.episode += 1
+                if self.debug_mode:
+                    logger.debug(
+                        f"Episode {self.episode} complete: "
+                        f"length={episode_length}, reward={episode_reward:.2f}"
+                    )
+                
+                # Log episode stats
+                self.logger.log_scalar("train/episode_reward", episode_reward, self.timestep)
+                self.logger.log_scalar("train/episode_length", episode_length, self.timestep)
+                
+                # Reset
+                obs = env.reset()
+                episode_reward = 0.0
+                episode_length = 0
             
             # Update model if buffer has enough data
             if len(self.buffer) >= self.config.batch_size:
@@ -301,6 +393,7 @@ class TrainingLoop:
         ppo_stats = self.ppo.get_stats()
         selfplay_stats = self.selfplay_manager.get_stats()
         
+        # Basic stats
         self.logger.log_dict({
             "timestep": self.timestep,
             "episode": self.episode,
@@ -308,9 +401,29 @@ class TrainingLoop:
             "avg_reward": buffer_stats.get("avg_reward_per_episode", 0.0)
         })
         
+        # PPO stats (if available)
+        if ppo_stats.get("ent_coef") and len(ppo_stats["ent_coef"]) > 0:
+            latest_ent = ppo_stats["ent_coef"][-1]
+            self.logger.log_scalar("train/entropy_coef", latest_ent, self.timestep)
+        
+        if ppo_stats.get("policy_loss") and len(ppo_stats["policy_loss"]) > 0:
+            latest_policy_loss = ppo_stats["policy_loss"][-1]
+            self.logger.log_scalar("train/policy_loss", latest_policy_loss, self.timestep)
+        
+        if ppo_stats.get("value_loss") and len(ppo_stats["value_loss"]) > 0:
+            latest_value_loss = ppo_stats["value_loss"][-1]
+            self.logger.log_scalar("train/value_loss", latest_value_loss, self.timestep)
+        
+        if ppo_stats.get("gae_lambda") and len(ppo_stats["gae_lambda"]) > 0:
+            latest_gae = ppo_stats["gae_lambda"][-1]
+            self.logger.log_scalar("train/gae_lambda", latest_gae, self.timestep)
+        
         self.logger.flush()
         
-        logger.info(f"Timestep: {self.timestep}, Episode: {self.episode}")
+        logger.info(
+            f"Timestep: {self.timestep}, Episode: {self.episode}, "
+            f"Buffer: {buffer_stats['size']}, Avg Reward: {buffer_stats.get('avg_reward_per_episode', 0.0):.2f}"
+        )
     
     def _save_checkpoint(self, is_best: bool = False):
         """Save checkpoint.
@@ -334,11 +447,14 @@ class TrainingLoop:
     
     def _evaluate(self):
         """Evaluate model and check for early stopping."""
+        # Get num_games from config (default to constant if not specified)
+        num_games = self.config.raw_config.get('logging', {}).get('eval_num_games', DEFAULT_EVAL_GAMES)
+        
         # Run full evaluation suite
         results = self.evaluator.evaluate_full(
             self.model,
             self.timestep,
-            num_games=5
+            num_games=num_games
         )
         
         current_elo = self.evaluator.get_elo()
@@ -353,7 +469,7 @@ class TrainingLoop:
         
         self.logger.flush()
         
-        logger.info(f"Evaluation - Elo: {current_elo:.0f}")
+        logger.info(f"Evaluation - Elo: {current_elo:.0f} (after {num_games} games per opponent)")
         
         # Check for improvement
         if current_elo > self.best_elo:

@@ -28,16 +28,18 @@ class ReplayBuffer:
     
     def add(
         self,
-        observation: np.ndarray,
-        action: np.ndarray,
-        reward: float,
-        next_observation: np.ndarray,
-        done: bool,
+        experience: Dict[str, Any] = None,
+        observation: np.ndarray = None,
+        action: np.ndarray = None,
+        reward: float = None,
+        next_observation: np.ndarray = None,
+        done: bool = None,
         info: Optional[Dict[str, Any]] = None
     ):
         """Add experience to buffer.
         
         Args:
+            experience: Experience dict (if provided, other args ignored)
             observation: Current observation
             action: Action taken
             reward: Reward received
@@ -45,20 +47,28 @@ class ReplayBuffer:
             done: Whether episode is done
             info: Additional info (optional)
         """
-        experience = {
-            "observation": observation,
-            "action": action,
-            "reward": reward,
-            "next_observation": next_observation,
-            "done": done,
-            "info": info or {}
-        }
-        
-        self.buffer.append(experience)
-        self.total_reward += reward
-        
-        if done:
-            self.episodes_stored += 1
+        if experience is not None:
+            # Direct dict interface
+            self.buffer.append(experience)
+            self.total_reward += experience.get('reward', 0.0)
+            if experience.get('done', False):
+                self.episodes_stored += 1
+        else:
+            # Legacy interface
+            exp = {
+                "observation": observation,
+                "action": action,
+                "reward": reward,
+                "next_observation": next_observation,
+                "done": done,
+                "info": info or {}
+            }
+            
+            self.buffer.append(exp)
+            self.total_reward += reward
+            
+            if done:
+                self.episodes_stored += 1
     
     def sample(self, batch_size: int) -> Dict[str, np.ndarray]:
         """Sample random batch from buffer.
