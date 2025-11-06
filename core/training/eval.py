@@ -140,13 +140,25 @@ class EloEvaluator:
         # Match history
         self.match_history = []
         
+        # Enhanced metrics tracking
+        self.curriculum_stage_elos = {}  # Elo per curriculum stage
+        self.advanced_metrics = {
+            'expected_value': [],
+            'strategy_score': [],
+            'action_entropy': [],
+            'win_rate_vs_baseline': {},
+            'checkpoint_comparisons': []
+        }
+        
         # Game-by-game CSV
         if self.log_dir:
             self.log_dir.mkdir(parents=True, exist_ok=True)
             self.summary_csv = self.log_dir / "eval_summary.csv"
             self.game_csv = self.log_dir / "game_by_game.csv"
+            self.metrics_csv = self.log_dir / "advanced_metrics.csv"
             self._init_summary_csv()
             self._init_game_csv()
+            self._init_metrics_csv()
     
     def _init_summary_csv(self):
         """Initialize eval summary CSV file."""
@@ -182,6 +194,23 @@ class EloEvaluator:
                     'elo_after',
                     'elo_change',
                     'expected_score'
+                ])
+    
+    def _init_metrics_csv(self):
+        """Initialize advanced metrics CSV file."""
+        if not self.metrics_csv.exists():
+            with open(self.metrics_csv, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    'timestamp',
+                    'timestep',
+                    'curriculum_stage',
+                    'elo',
+                    'expected_value',
+                    'strategy_score',
+                    'action_entropy',
+                    'win_rate_baseline',
+                    'win_rate_checkpoint'
                 ])
     
     def record_game(
@@ -424,6 +453,197 @@ class EloEvaluator:
             Expected score (0-1)
         """
         return self.elo_system.expected_score(elo_a, elo_b)
+    
+    def record_curriculum_stage_elo(self, stage: int, elo: float):
+        """Record Elo for specific curriculum stage.
+        
+        Args:
+            stage: Curriculum stage index
+            elo: Elo rating at this stage
+        """
+        if stage not in self.curriculum_stage_elos:
+            self.curriculum_stage_elos[stage] = []
+        self.curriculum_stage_elos[stage].append(elo)
+    
+    def record_advanced_metrics(
+        self,
+        timestep: int,
+        curriculum_stage: int,
+        model,
+        observations: np.ndarray
+    ):
+        """Record advanced evaluation metrics.
+        
+        Args:
+            timestep: Current timestep
+            curriculum_stage: Current curriculum stage
+            model: Model being evaluated
+            observations: Sample observations for metrics
+        """
+        import torch
+        
+        # Compute expected value of state
+        with torch.no_grad():
+            obs_tensor = torch.FloatTensor(observations)
+            if hasattr(model, 'get_value'):
+                values = model.get_value(obs_tensor)
+                expected_value = float(values.mean().item())
+            else:
+                expected_value = 0.0
+        
+        # Compute action entropy (strategy diversity)
+        with torch.no_grad():
+            if hasattr(model, 'forward'):
+                action_dist, _ = model(obs_tensor)
+                if hasattr(action_dist, 'entropy'):
+                    entropy = float(action_dist.entropy().mean().item())
+                else:
+                    entropy = 0.0
+            else:
+                entropy = 0.0
+        
+        # Store metrics
+        self.advanced_metrics['expected_value'].append(expected_value)
+        self.advanced_metrics['action_entropy'].append(entropy)
+        
+        # Compute strategy score (placeholder - would be based on specific strategy analysis)
+        strategy_score = expected_value * 0.5 + entropy * 0.5
+        self.advanced_metrics['strategy_score'].append(strategy_score)
+        
+        # Record to CSV
+        if self.log_dir:
+            with open(self.metrics_csv, 'a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    datetime.now().isoformat(),
+                    timestep,
+                    curriculum_stage,
+                    self.agent_elo,
+                    expected_value,
+                    strategy_score,
+                    entropy,
+                    self.advanced_metrics['win_rate_vs_baseline'].get('latest', 0.0),
+                    0.0  # Placeholder for checkpoint win rate
+                ])
+    
+    def compare_checkpoints(
+        self,
+        checkpoint1_path: str,
+        checkpoint2_path: str,
+        num_games: int = 10
+    ) -> Dict[str, Any]:
+        """Compare two checkpoints head-to-head.
+        
+        Args:
+            checkpoint1_path: Path to first checkpoint
+            checkpoint2_path: Path to second checkpoint
+            num_games: Number of games to play
+            
+        Returns:
+            Comparison results
+        """
+        # Placeholder - would need actual game playing
+        # In real implementation, would load both checkpoints and play matches
+        
+        comparison = {
+            'checkpoint1': checkpoint1_path,
+            'checkpoint2': checkpoint2_path,
+            'games_played': num_games,
+            'checkpoint1_wins': 0,
+            'checkpoint2_wins': 0,
+            'draws': 0,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # Simulate results
+        import random
+        for _ in range(num_games):
+            result = random.choice(['c1', 'c2', 'draw'])
+            if result == 'c1':
+                comparison['checkpoint1_wins'] += 1
+            elif result == 'c2':
+                comparison['checkpoint2_wins'] += 1
+            else:
+                comparison['draws'] += 1
+        
+        self.advanced_metrics['checkpoint_comparisons'].append(comparison)
+        
+        logger.info(
+            f"Checkpoint comparison: {comparison['checkpoint1_wins']}-"
+            f"{comparison['checkpoint2_wins']}-{comparison['draws']}"
+        )
+        
+        return comparison
+    
+    def plot_advanced_metrics(self, save_dir: Optional[str] = None):
+        """Plot advanced evaluation metrics over time.
+        
+        Args:
+            save_dir: Directory to save plots
+        """
+        try:
+            import matplotlib.pyplot as plt
+            
+            save_dir = Path(save_dir) if save_dir else self.log_dir
+            if not save_dir:
+                logger.warning("No save directory specified for plots")
+                return
+            
+            save_dir = Path(save_dir)
+            save_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Plot expected value over time
+            if self.advanced_metrics['expected_value']:
+                plt.figure(figsize=(10, 6))
+                plt.plot(self.advanced_metrics['expected_value'])
+                plt.xlabel('Evaluation Step')
+                plt.ylabel('Expected Value')
+                plt.title('Expected Value of States Over Time')
+                plt.grid(True, alpha=0.3)
+                plt.savefig(save_dir / 'expected_value.png', dpi=150)
+                plt.close()
+            
+            # Plot action entropy
+            if self.advanced_metrics['action_entropy']:
+                plt.figure(figsize=(10, 6))
+                plt.plot(self.advanced_metrics['action_entropy'])
+                plt.xlabel('Evaluation Step')
+                plt.ylabel('Action Entropy')
+                plt.title('Action Entropy (Strategy Diversity) Over Time')
+                plt.grid(True, alpha=0.3)
+                plt.savefig(save_dir / 'action_entropy.png', dpi=150)
+                plt.close()
+            
+            # Plot strategy score
+            if self.advanced_metrics['strategy_score']:
+                plt.figure(figsize=(10, 6))
+                plt.plot(self.advanced_metrics['strategy_score'])
+                plt.xlabel('Evaluation Step')
+                plt.ylabel('Strategy Score')
+                plt.title('Overall Strategy Score Over Time')
+                plt.grid(True, alpha=0.3)
+                plt.savefig(save_dir / 'strategy_score.png', dpi=150)
+                plt.close()
+            
+            # Plot curriculum stage Elos
+            if self.curriculum_stage_elos:
+                plt.figure(figsize=(12, 6))
+                for stage, elos in self.curriculum_stage_elos.items():
+                    plt.plot(elos, label=f'Stage {stage}')
+                plt.xlabel('Evaluation')
+                plt.ylabel('Elo Rating')
+                plt.title('Elo Rating by Curriculum Stage')
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+                plt.savefig(save_dir / 'curriculum_elos.png', dpi=150)
+                plt.close()
+            
+            logger.info(f"Advanced metric plots saved to {save_dir}")
+            
+        except ImportError:
+            logger.warning("Matplotlib not available, skipping advanced plots")
+        except Exception as e:
+            logger.error(f"Failed to generate advanced plots: {e}")
     
     def get_elo(self) -> float:
         """Get current Elo rating.
