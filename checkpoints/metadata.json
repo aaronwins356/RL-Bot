@@ -1,0 +1,26 @@
+{
+  "checkpoints": [
+    {
+      "path": "checkpoints/checkpoint_step_0.pt",
+      "step": 0,
+      "metrics": {
+        "timestep": 0,
+        "episode": 0,
+        "eval_score": 1500
+      },
+      "is_best": false
+    },
+    {
+      "path": "checkpoints/checkpoint_step_1000.pt",
+      "step": 1000,
+      "metrics": {
+        "timestep": 1000,
+        "episode": 0,
+        "eval_score": 1500
+      },
+      "is_best": true
+    }
+  ],
+  "best_metric": 1500,
+  "best_checkpoint": "checkpoints/best_model.pt"
+}

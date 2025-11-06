@@ -1,0 +1,107 @@
+{
+  "timestamp": "2025-11-06T06:05:21.502674",
+  "config": {
+    "training": {
+      "algorithm": "ppo",
+      "total_timesteps": 1000,
+      "batch_size": 4096,
+      "n_epochs": 10,
+      "learning_rate": 0.0003,
+      "clip_range": 0.2,
+      "gamma": 0.99,
+      "gae_lambda": 0.95,
+      "vf_coef": 0.5,
+      "ent_coef": 0.01,
+      "max_grad_norm": 0.5,
+      "selfplay": {
+        "enabled": true,
+        "curriculum_stages": [
+          "1v1",
+          "2v2",
+          "3v3"
+        ],
+        "opponent_update_freq": 100000,
+        "elo_threshold": 100
+      },
+      "offline": {
+        "enabled": false,
+        "dataset_path": "data/telemetry_logs",
+        "pretrain_epochs": 10,
+        "pretrain_lr": 0.001
+      }
+    },
+    "network": {
+      "architecture": "mlp",
+      "hidden_sizes": [
+        512,
+        512,
+        256
+      ],
+      "activation": "relu",
+      "use_lstm": false,
+      "lstm_hidden_size": 256,
+      "encoder": {
+        "normalize": true,
+        "include_history": false,
+        "history_length": 4
+      }
+    },
+    "policy": {
+      "type": "hybrid",
+      "hybrid": {
+        "use_rules_on_kickoff": true,
+        "use_rules_on_low_confidence": true,
+        "confidence_threshold": 0.7,
+        "ood_detection": "entropy",
+        "ood_threshold": 2.0,
+        "fallback_on_saturation": true
+      },
+      "rules": {
+        "aggressive": false,
+        "boost_conservation": true,
+        "safe_rotation": true
+      }
+    },
+    "inference": {
+      "device": "cpu",
+      "batch_size": 1,
+      "frame_budget_ms": 8.0
+    },
+    "logging": {
+      "log_dir": "logs",
+      "tensorboard": true,
+      "log_interval": 10,
+      "save_interval": 10000,
+      "eval_interval": 50000
+    },
+    "checkpoints": {
+      "save_dir": "checkpoints",
+      "keep_best_n": 5,
+      "keep_latest": true
+    },
+    "telemetry": {
+      "enabled": true,
+      "buffer_size": 100000,
+      "save_interval": 10000,
+      "save_path": "data/telemetry"
+    }
+  },
+  "git": {
+    "commit_hash": "34aaff258bd5e27d923f255b154a2f06606423ba",
+    "branch": "copilot/fix-config-parsing-refactor-train",
+    "dirty": true
+  },
+  "cli_args": {
+    "config": "configs/base.yaml",
+    "timesteps": 100,
+    "device": null,
+    "logdir": null,
+    "checkpoint": null,
+    "eval_freq": null,
+    "save_freq": null,
+    "seed": null,
+    "aerial_curriculum": false,
+    "offline_pretrain": false,
+    "debug": true
+  }
+}

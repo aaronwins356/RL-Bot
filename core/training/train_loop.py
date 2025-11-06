@@ -23,17 +23,28 @@ class TrainingLoop:
     def __init__(
         self,
         config: Config,
-        log_dir: Optional[Path] = None
+        log_dir: Optional[str] = None,
+        checkpoint_path: Optional[str] = None,
+        seed: Optional[int] = None
     ):
         """Initialize training loop.
         
         Args:
             config: Training configuration
             log_dir: Log directory
+            checkpoint_path: Path to checkpoint to resume from
+            seed: Random seed for reproducibility
         """
         self.config = config
         self.log_dir = Path(log_dir or config.log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.checkpoint_path = checkpoint_path
+        self.seed = seed
+        
+        # Set random seeds if provided
+        if seed is not None:
+            torch.manual_seed(seed)
+            np.random.seed(seed)
         
         # Device
         self.device = torch.device(config.device)
