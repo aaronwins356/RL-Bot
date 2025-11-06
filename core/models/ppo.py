@@ -245,95 +245,27 @@ class PPO:
             if self.use_amp:
                 with torch.cuda.amp.autocast():
                     cat_probs, ber_probs, values, _, _ = self.model(observations)
-
-                    # Compute new log probs
-                    new_log_probs_cat = self._compute_log_probs_categorical(
-                        cat_probs, actions_cat
-                    )
-                    new_log_probs_ber = self._compute_log_probs_bernoulli(
-                        ber_probs, actions_ber
-                    )
-
-                    # Compute ratio (pi_new / pi_old)
-                    ratio_cat = torch.exp(new_log_probs_cat - old_log_probs_cat)
-                    ratio_ber = torch.exp(new_log_probs_ber - old_log_probs_ber)
-                    ratio = ratio_cat.mean(dim=1) * ratio_ber.mean(
-                        dim=1
-                    )  # Combine ratios
-
-                    # Clipped surrogate objective
-                    surr1 = ratio * advantages
-                    surr2 = (
-                        torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
-                        * advantages
-                    )
-                    policy_loss = -torch.min(surr1, surr2).mean()
-
-                    # Value loss (clipped)
-                    values = values.squeeze()
-                    value_pred_clipped = old_values + torch.clamp(
-                        values - old_values, -self.clip_range, self.clip_range
-                    )
-                    value_loss1 = (values - returns).pow(2)
-                    value_loss2 = (value_pred_clipped - returns).pow(2)
-                    value_loss = 0.5 * torch.max(value_loss1, value_loss2).mean()
-
-                    # Entropy loss (for exploration)
-                    entropy_cat = self._compute_entropy_categorical(cat_probs)
-                    entropy_ber = self._compute_entropy_bernoulli(ber_probs)
-                    entropy_loss = -(entropy_cat + entropy_ber).mean()
-
-                    # Total loss
-                    total_loss = (
-                        policy_loss
-                        + self.vf_coef * value_loss
-                        + self.ent_coef * entropy_loss
-                    )
             else:
-                # Standard precision
                 cat_probs, ber_probs, values, _, _ = self.model(observations)
 
-                # Compute new log probs
-                new_log_probs_cat = self._compute_log_probs_categorical(
-                    cat_probs, actions_cat
-                )
-                new_log_probs_ber = self._compute_log_probs_bernoulli(
-                    ber_probs, actions_ber
-                )
+            # Compute losses (same for both AMP and non-AMP)
+            policy_loss, value_loss, entropy_loss, ratio = self._compute_ppo_losses(
+                cat_probs,
+                ber_probs,
+                values,
+                actions_cat,
+                actions_ber,
+                old_log_probs_cat,
+                old_log_probs_ber,
+                advantages,
+                returns,
+                old_values,
+            )
 
-                # Compute ratio (pi_new / pi_old)
-                ratio_cat = torch.exp(new_log_probs_cat - old_log_probs_cat)
-                ratio_ber = torch.exp(new_log_probs_ber - old_log_probs_ber)
-                ratio = ratio_cat.mean(dim=1) * ratio_ber.mean(dim=1)  # Combine ratios
-
-                # Clipped surrogate objective
-                surr1 = ratio * advantages
-                surr2 = (
-                    torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
-                    * advantages
-                )
-                policy_loss = -torch.min(surr1, surr2).mean()
-
-                # Value loss (clipped)
-                values = values.squeeze()
-                value_pred_clipped = old_values + torch.clamp(
-                    values - old_values, -self.clip_range, self.clip_range
-                )
-                value_loss1 = (values - returns).pow(2)
-                value_loss2 = (value_pred_clipped - returns).pow(2)
-                value_loss = 0.5 * torch.max(value_loss1, value_loss2).mean()
-
-                # Entropy loss (for exploration)
-                entropy_cat = self._compute_entropy_categorical(cat_probs)
-                entropy_ber = self._compute_entropy_bernoulli(ber_probs)
-                entropy_loss = -(entropy_cat + entropy_ber).mean()
-
-                # Total loss
-                total_loss = (
-                    policy_loss
-                    + self.vf_coef * value_loss
-                    + self.ent_coef * entropy_loss
-                )
+            # Total loss
+            total_loss = (
+                policy_loss + self.vf_coef * value_loss + self.ent_coef * entropy_loss
+            )
 
             # Optimization step
             self.optimizer.zero_grad()
@@ -447,6 +379,68 @@ class PPO:
         """
         entropy = -(probs * torch.log(probs + 1e-8)).sum(dim=2)  # (B, n_ber)
         return entropy.sum(dim=1)
+
+    def _compute_ppo_losses(
+        self,
+        cat_probs: torch.Tensor,
+        ber_probs: torch.Tensor,
+        values: torch.Tensor,
+        actions_cat: torch.Tensor,
+        actions_ber: torch.Tensor,
+        old_log_probs_cat: torch.Tensor,
+        old_log_probs_ber: torch.Tensor,
+        advantages: torch.Tensor,
+        returns: torch.Tensor,
+        old_values: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Compute PPO losses (policy, value, entropy).
+
+        Args:
+            cat_probs: Categorical action probabilities
+            ber_probs: Bernoulli action probabilities
+            values: Value predictions
+            actions_cat: Categorical actions taken
+            actions_ber: Bernoulli actions taken
+            old_log_probs_cat: Old log probs for categorical actions
+            old_log_probs_ber: Old log probs for bernoulli actions
+            advantages: Computed advantages
+            returns: Computed returns
+            old_values: Old value estimates
+
+        Returns:
+            Tuple of (policy_loss, value_loss, entropy_loss, ratio)
+        """
+        # Compute new log probs
+        new_log_probs_cat = self._compute_log_probs_categorical(cat_probs, actions_cat)
+        new_log_probs_ber = self._compute_log_probs_bernoulli(ber_probs, actions_ber)
+
+        # Compute ratio (pi_new / pi_old)
+        ratio_cat = torch.exp(new_log_probs_cat - old_log_probs_cat)
+        ratio_ber = torch.exp(new_log_probs_ber - old_log_probs_ber)
+        ratio = ratio_cat.mean(dim=1) * ratio_ber.mean(dim=1)  # Combine ratios
+
+        # Clipped surrogate objective
+        surr1 = ratio * advantages
+        surr2 = (
+            torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range) * advantages
+        )
+        policy_loss = -torch.min(surr1, surr2).mean()
+
+        # Value loss (clipped)
+        values = values.squeeze()
+        value_pred_clipped = old_values + torch.clamp(
+            values - old_values, -self.clip_range, self.clip_range
+        )
+        value_loss1 = (values - returns).pow(2)
+        value_loss2 = (value_pred_clipped - returns).pow(2)
+        value_loss = 0.5 * torch.max(value_loss1, value_loss2).mean()
+
+        # Entropy loss (for exploration)
+        entropy_cat = self._compute_entropy_categorical(cat_probs)
+        entropy_ber = self._compute_entropy_bernoulli(ber_probs)
+        entropy_loss = -(entropy_cat + entropy_ber).mean()
+
+        return policy_loss, value_loss, entropy_loss, ratio
 
     def get_stats(self) -> Dict[str, List[float]]:
         """Get training statistics.

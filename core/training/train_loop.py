@@ -248,12 +248,9 @@ class TrainingLoop:
                     obs = torch.tensor(
                         batch["observation"], dtype=torch.float32, device=self.device
                     )
-                    # action = torch.tensor(
-                    #     batch["action"], dtype=torch.float32, device=self.device
-                    # )
 
                     # Forward pass (behavioral cloning)
-                    # Note: This is simplified - real implementation would need proper action heads
+                    # Note: This is simplified - real implementation would need proper action prediction
                     value = self.model.get_value(obs)
 
                     # Compute loss (placeholder - would need actual action prediction)
@@ -341,7 +338,7 @@ class TrainingLoop:
         )
         logger.info(f"Batch Size: {self.config.batch_size}")
         logger.info(
-            f"Learning Rate: {self.config.raw_config.get('training', {}).get('learning_rate', 3e-4)}"
+            f"Learning Rate: {self.config.raw_config.get('training', {}).get('learning_rate', 8.0e-4)}"
         )
         logger.info("=" * 60)
         logger.info("✅ Training ready (no multiprocessing conflicts)")
