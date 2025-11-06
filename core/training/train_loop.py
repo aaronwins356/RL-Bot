@@ -47,13 +47,22 @@ class TrainingLoop:
         self.checkpoint_path = checkpoint_path
         self.seed = seed
         
+        # Debug mode flag
+        self.debug_mode = config.raw_config.get('training', {}).get('debug_mode', False)
+        if self.debug_mode:
+            logger.info("DEBUG MODE ENABLED - Detailed logging active")
+        
         # Set random seeds if provided
         if seed is not None:
             torch.manual_seed(seed)
             np.random.seed(seed)
         
-        # Device
-        self.device = torch.device(config.device)
+        # Device - check CUDA availability
+        device_str = config.device
+        if device_str == "cuda" and not torch.cuda.is_available():
+            logger.warning("CUDA requested but not available, falling back to CPU")
+            device_str = "cpu"
+        self.device = torch.device(device_str)
         
         # Model
         self.model = self._create_model()
@@ -188,6 +197,9 @@ class TrainingLoop:
             total_timesteps: Total timesteps to train (uses config if None)
             forced_stage: Force specific curriculum stage (for debugging)
         """
+        import time
+        self.start_time = time.time()
+        
         total_timesteps = total_timesteps or self.config.total_timesteps
         self.forced_stage = forced_stage
         
@@ -255,7 +267,7 @@ class TrainingLoop:
             self.timestep += 1
         
         logger.info("Training complete!")
-        self._save_checkpoint(is_final=True)
+        self._save_checkpoint(is_best=True)  # Final checkpoint is also best
     
     def _update(self):
         """Perform PPO update."""
@@ -300,8 +312,12 @@ class TrainingLoop:
         
         logger.info(f"Timestep: {self.timestep}, Episode: {self.episode}")
     
-    def _save_checkpoint(self, is_final: bool = False):
-        """Save checkpoint."""
+    def _save_checkpoint(self, is_best: bool = False):
+        """Save checkpoint.
+        
+        Args:
+            is_best: Whether this is the best checkpoint so far
+        """
         metrics = {
             "timestep": self.timestep,
             "episode": self.episode,
@@ -313,7 +329,7 @@ class TrainingLoop:
             self.ppo.optimizer,
             self.timestep,
             metrics,
-            is_best=is_final
+            is_best=is_best
         )
     
     def _evaluate(self):

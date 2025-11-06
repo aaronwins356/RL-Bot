@@ -283,6 +283,28 @@ def parse_args():
         help='Limit evaluation/training to N ticks in debug mode'
     )
     
+    parser.add_argument(
+        '--discord-webhook',
+        type=str,
+        default=None,
+        help='Discord webhook URL for training notifications'
+    )
+    
+    parser.add_argument(
+        '--export-checkpoint',
+        type=str,
+        default=None,
+        help='Export checkpoint for RLBot deployment after training'
+    )
+    
+    parser.add_argument(
+        '--export-format',
+        type=str,
+        choices=['torchscript', 'onnx', 'raw'],
+        default='torchscript',
+        help='Format for checkpoint export'
+    )
+    
     return parser.parse_args()
 
 
@@ -321,6 +343,11 @@ def main():
         logger.info(f"Overriding total timesteps: {args.timesteps}")
     
     if args.device is not None:
+        # Validate CUDA availability
+        import torch
+        if args.device == 'cuda' and not torch.cuda.is_available():
+            logger.warning("CUDA requested but not available, falling back to CPU")
+            args.device = 'cpu'
         overrides.setdefault('inference', {})['device'] = args.device
         logger.info(f"Overriding device: {args.device}")
     
@@ -380,6 +407,12 @@ def main():
     # Update config with final log directory
     config_manager.config.logging.log_dir = str(log_dir)
     
+    # Validate and fallback device if needed
+    import torch
+    if config.inference.device == 'cuda' and not torch.cuda.is_available():
+        logger.warning("CUDA requested in config but not available, falling back to CPU")
+        config_manager.config.inference.device = 'cpu'
+    
     # Save run metadata
     save_run_metadata(log_dir, config.to_dict(), args)
     
@@ -425,6 +458,22 @@ def main():
     
     logger.info(f"File logging enabled: {file_log_path}")
     
+    # Initialize Discord webhook if provided
+    discord_webhook = None
+    if args.discord_webhook:
+        from core.infra.discord_webhook import DiscordWebhook
+        discord_webhook = DiscordWebhook(args.discord_webhook, enabled=True)
+        logger.info("Discord webhook notifications enabled")
+        
+        # Send training start notification
+        discord_webhook.send_training_start({
+            'algorithm': config.training.algorithm,
+            'total_timesteps': config.training.total_timesteps,
+            'batch_size': config.training.batch_size,
+            'learning_rate': config.training.learning_rate,
+            'device': config.inference.device
+        })
+    
     # Create training loop
     try:
         trainer = TrainingLoop(
@@ -445,6 +494,45 @@ def main():
         logger.info("Training completed successfully!")
         logger.info("=" * 70)
         
+        # Send Discord completion notification
+        if discord_webhook:
+            import time
+            training_time = time.time() - trainer.start_time if hasattr(trainer, 'start_time') else 0
+            discord_webhook.send_training_complete(
+                final_timestep=trainer.timestep,
+                final_elo=trainer.evaluator.get_elo(),
+                best_elo=trainer.best_elo,
+                total_time=training_time
+            )
+        
+        # Export checkpoint if requested
+        if args.export_checkpoint:
+            logger.info("")
+            logger.info("Exporting checkpoint for RLBot deployment...")
+            
+            from core.infra.export import CheckpointExporter
+            from pathlib import Path as ExportPath
+            
+            checkpoint_dir = ExportPath(config.save_dir)
+            exporter = CheckpointExporter(checkpoint_dir)
+            
+            # Find best checkpoint
+            best_checkpoint = checkpoint_dir / "best_model.pt"
+            if best_checkpoint.exists():
+                export_dir = ExportPath(args.export_checkpoint)
+                
+                try:
+                    exporter.create_rlbot_package(
+                        best_checkpoint,
+                        export_dir,
+                        bot_name="TrainedRLBot"
+                    )
+                    logger.info(f"RLBot package exported to: {export_dir}")
+                except Exception as export_error:
+                    logger.error(f"Failed to export checkpoint: {export_error}")
+            else:
+                logger.warning("No best checkpoint found, skipping export")
+        
     except KeyboardInterrupt:
         logger.warning("")
         logger.warning("=" * 70)
@@ -458,6 +546,14 @@ def main():
         logger.error("=" * 70)
         logger.error(f"Training failed with error: {e}")
         logger.error("=" * 70)
+        
+        # Send Discord error notification
+        if discord_webhook:
+            discord_webhook.send_error(
+                error_message=str(e),
+                timestep=trainer.timestep if 'trainer' in locals() else 0
+            )
+        
         if args.debug:
             raise
         sys.exit(1)

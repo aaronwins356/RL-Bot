@@ -43,12 +43,31 @@ class CurriculumManager:
         """
         self.config = config
         self.aerial_focus = config.get('aerial_focus', False)
+        self.use_performance_transitions = config.get('use_performance_transitions', True)
         self.stages = self._create_stages()
         self.current_stage_idx = 0
+        
+        # Performance tracking for transitions
+        self.stage_performance = {
+            'win_rate': 0.0,
+            'avg_reward': 0.0,
+            'elo_rating': 1500.0,
+            'games_played': 0
+        }
+        
+        # Transition thresholds
+        self.transition_thresholds = {
+            'min_win_rate': config.get('transition_win_rate', 0.6),
+            'min_elo': config.get('transition_elo', 1400),
+            'min_games': config.get('transition_min_games', 100),
+            'min_timesteps': config.get('transition_min_timesteps', 100000)
+        }
         
         logger.info(f"Curriculum manager initialized with {len(self.stages)} stages")
         if self.aerial_focus:
             logger.info("Aerial-focused curriculum enabled")
+        if self.use_performance_transitions:
+            logger.info("Performance-based transitions enabled")
     
     def _create_stages(self) -> List[CurriculumStage]:
         """Create curriculum stages based on config.
@@ -138,27 +157,73 @@ class CurriculumManager:
         # Default to last stage
         return self.stages[-1]
     
-    def should_transition(self, timestep: int) -> bool:
+    def should_transition(self, timestep: int, performance_metrics: Optional[Dict[str, float]] = None) -> bool:
         """Check if we should transition to next stage.
         
         Args:
             timestep: Current training timestep
+            performance_metrics: Optional performance metrics for performance-based transitions
             
         Returns:
             True if should transition to next stage
         """
         current_stage = self.get_current_stage(timestep)
         
-        # Check if we've moved past current stage
-        if timestep >= current_stage.max_timesteps:
-            next_stage_idx = self.current_stage_idx + 1
-            if next_stage_idx < len(self.stages):
-                self.current_stage_idx = next_stage_idx
-                logger.info(
-                    f"Transitioning to stage {self.current_stage_idx}: "
-                    f"{self.stages[self.current_stage_idx].name}"
-                )
-                return True
+        # Update performance tracking
+        if performance_metrics and self.use_performance_transitions:
+            self.stage_performance.update(performance_metrics)
+        
+        # Performance-based transition
+        if self.use_performance_transitions and performance_metrics:
+            # Check if we meet all criteria
+            meets_win_rate = self.stage_performance['win_rate'] >= self.transition_thresholds['min_win_rate']
+            meets_elo = self.stage_performance['elo_rating'] >= self.transition_thresholds['min_elo']
+            meets_games = self.stage_performance['games_played'] >= self.transition_thresholds['min_games']
+            meets_timesteps = timestep >= current_stage.min_timesteps + self.transition_thresholds['min_timesteps']
+            
+            if meets_win_rate and meets_elo and meets_games and meets_timesteps:
+                next_stage_idx = self.current_stage_idx + 1
+                if next_stage_idx < len(self.stages):
+                    logger.info(
+                        f"Performance-based transition triggered: "
+                        f"win_rate={self.stage_performance['win_rate']:.2%}, "
+                        f"elo={self.stage_performance['elo_rating']:.0f}, "
+                        f"games={self.stage_performance['games_played']}"
+                    )
+                    self.current_stage_idx = next_stage_idx
+                    
+                    # Reset performance tracking for new stage
+                    self.stage_performance = {
+                        'win_rate': 0.0,
+                        'avg_reward': 0.0,
+                        'elo_rating': self.stage_performance['elo_rating'],  # Keep Elo
+                        'games_played': 0
+                    }
+                    
+                    logger.info(
+                        f"Transitioned to stage {self.current_stage_idx}: "
+                        f"{self.stages[self.current_stage_idx].name}"
+                    )
+                    return True
+            
+            # Also check timestep-based fallback
+            if timestep >= current_stage.max_timesteps:
+                logger.info("Timestep-based fallback transition triggered")
+                next_stage_idx = self.current_stage_idx + 1
+                if next_stage_idx < len(self.stages):
+                    self.current_stage_idx = next_stage_idx
+                    return True
+        else:
+            # Pure timestep-based transition
+            if timestep >= current_stage.max_timesteps:
+                next_stage_idx = self.current_stage_idx + 1
+                if next_stage_idx < len(self.stages):
+                    self.current_stage_idx = next_stage_idx
+                    logger.info(
+                        f"Transitioning to stage {self.current_stage_idx}: "
+                        f"{self.stages[self.current_stage_idx].name}"
+                    )
+                    return True
         
         return False
     
