@@ -111,7 +111,7 @@ class RulePolicy:
         # Get angle to ball
         forward = context.car_rotation[:3]
         angle = np.arctan2(
-            np.cross(forward[:2], ball_dir[:2]),
+            np.cross(forward[:2].astype(float), ball_dir[:2].astype(float)),
             np.dot(forward[:2], ball_dir[:2])
         )
         
@@ -143,7 +143,7 @@ class RulePolicy:
         
         forward = context.car_rotation[:3]
         angle = np.arctan2(
-            np.cross(forward[:2], target_dir[:2]),
+            np.cross(forward[:2].astype(float), target_dir[:2].astype(float)),
             np.dot(forward[:2], target_dir[:2])
         )
         
@@ -167,7 +167,7 @@ class RulePolicy:
         
         forward = context.car_rotation[:3]
         angle = np.arctan2(
-            np.cross(forward[:2], ball_dir[:2]),
+            np.cross(forward[:2].astype(float), ball_dir[:2].astype(float)),
             np.dot(forward[:2], ball_dir[:2])
         )
         
@@ -197,7 +197,7 @@ class RulePolicy:
         
         forward = context.car_rotation[:3]
         angle = np.arctan2(
-            np.cross(forward[:2], target_dir[:2]),
+            np.cross(forward[:2].astype(float), target_dir[:2].astype(float)),
             np.dot(forward[:2], target_dir[:2])
         )
         
@@ -241,7 +241,7 @@ class RulePolicy:
         
         forward = context.car_rotation[:3]
         angle = np.arctan2(
-            np.cross(forward[:2], ball_dir[:2]),
+            np.cross(forward[:2].astype(float), ball_dir[:2].astype(float)),
             np.dot(forward[:2], ball_dir[:2])
         )
         
@@ -270,7 +270,7 @@ class RulePolicy:
         
         forward = context.car_rotation[:3]
         angle = np.arctan2(
-            np.cross(forward[:2], target_dir[:2]),
+            np.cross(forward[:2].astype(float), target_dir[:2].astype(float)),
             np.dot(forward[:2], target_dir[:2])
         )
         

@@ -48,7 +48,7 @@ class HybridPolicy:
         self.fallback_on_saturation = hybrid_config.get("fallback_on_saturation", True)
         
         # Initialize sub-policies
-        self.encoder = ObservationEncoder(config.get("encoder", {}))
+        self.encoder = ObservationEncoder(self.config.get("encoder", {}))
         self.rule_policy = RulePolicy(self.config.get("rules", {}))
         self.ml_policy = MLPolicy(model_path, self.encoder, self.config)
         
