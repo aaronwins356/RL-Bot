@@ -197,6 +197,9 @@ class TrainingLoop:
             total_timesteps: Total timesteps to train (uses config if None)
             forced_stage: Force specific curriculum stage (for debugging)
         """
+        import time
+        self.start_time = time.time()
+        
         total_timesteps = total_timesteps or self.config.total_timesteps
         self.forced_stage = forced_stage
         

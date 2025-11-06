@@ -79,3 +79,19 @@ telemetry:
   buffer_size: 100000
   save_interval: 10000
   save_path: "data/telemetry"
+
+notifications:
+  discord:
+    enabled: false
+    webhook_url: null  # Set your Discord webhook URL here
+    notify_on_start: true
+    notify_on_checkpoint: true
+    notify_on_evaluation: true
+    notify_on_complete: true
+    notify_on_error: true
+
+export:
+  enabled: false
+  format: "torchscript"  # "torchscript", "onnx", or "raw"
+  output_dir: "exported_models"
+  create_rlbot_package: true
