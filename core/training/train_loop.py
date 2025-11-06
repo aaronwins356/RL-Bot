@@ -317,6 +317,63 @@ class TrainingLoop:
         logger.info("=" * 60)
         logger.info("✅ Training ready (no multiprocessing conflicts)")
         logger.info("=" * 60)
+        
+        # Run dry test
+        self._run_dry_test()
+    
+    def _run_dry_test(self):
+        """Run a dry test to verify rollout works without scalar mismatches."""
+        logger.info("Running dry test (1 episode x 50 timesteps)...")
+        
+        try:
+            # Create single test environment
+            from core.env.rocket_sim_env import RocketSimEnv
+            test_env = RocketSimEnv(
+                reward_config_path=Path("configs/rewards.yaml"),
+                simulation_mode=True,
+                debug_mode=False
+            )
+            
+            obs = test_env.reset()
+            total_reward = 0.0
+            
+            for step in range(50):
+                # Prepare observation
+                obs = ensure_array(obs, "test_obs")
+                obs_tensor = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+                
+                # Forward pass
+                with torch.no_grad():
+                    if self.use_amp:
+                        with torch.cuda.amp.autocast():
+                            cat_probs, ber_probs, value, _, _ = self.model(obs_tensor)
+                    else:
+                        cat_probs, ber_probs, value, _, _ = self.model(obs_tensor)
+                
+                # Sample random action
+                action = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, 0])
+                
+                # Step
+                next_obs, reward, terminated, truncated, info = test_env.step(action)
+                done = terminated or truncated
+                
+                # Ensure arrays
+                next_obs = ensure_array(next_obs, "test_next_obs")
+                reward = float(reward) if np.isscalar(reward) else reward
+                
+                total_reward += reward
+                obs = next_obs
+                
+                if done:
+                    obs = test_env.reset()
+                    break
+            
+            logger.info(f"✅ rollout verified (no scalar mismatch) - test reward: {total_reward:.2f}")
+            
+        except Exception as e:
+            logger.error(f"❌ Dry test failed: {e}")
+            if self.debug_mode:
+                raise
     
     def train(self, total_timesteps: Optional[int] = None, forced_stage: Optional[int] = None):
         """Run training loop.
@@ -564,9 +621,6 @@ class TrainingLoop:
             if self.timestep % 100 == 0:
                 avg_entropy = np.mean(all_entropies)
                 self.logger.log_scalar("train/action_entropy", avg_entropy, self.timestep)
-                'done': done,
-                'value': value.item(),
-                'entropy': avg_action_entropy
             
             # Update observation for next step
             obs = next_obs
