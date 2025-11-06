@@ -262,16 +262,25 @@ class TrainingLoop:
                 obs_tensor = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
                 cat_probs, ber_probs, value, _, _ = self.model(obs_tensor)
                 
+                # Calculate action entropy for logging
+                action_entropy = 0.0
+                
                 # Sample actions
                 cat_actions = []
                 for probs in cat_probs:
                     cat_dist = torch.distributions.Categorical(probs)
                     cat_actions.append(cat_dist.sample().item())
+                    action_entropy += cat_dist.entropy().item()
                 
                 ber_actions = []
                 for probs in ber_probs:
                     ber_dist = torch.distributions.Bernoulli(probs)
                     ber_actions.append(ber_dist.sample().item())
+                    action_entropy += ber_dist.entropy().item()
+                
+                # Average entropy
+                num_actions = len(cat_probs) + len(ber_probs)
+                avg_action_entropy = action_entropy / max(1, num_actions)
                 
                 # Convert to action array (simplified)
                 action = np.array([
@@ -295,11 +304,16 @@ class TrainingLoop:
                 'action': action,
                 'reward': reward,
                 'done': done,
-                'value': value.item()
+                'value': value.item(),
+                'entropy': avg_action_entropy
             })
             
             episode_reward += reward
             episode_length += 1
+            
+            # Log action entropy periodically
+            if self.timestep % 100 == 0:
+                self.logger.log_scalar("train/action_entropy", avg_action_entropy, self.timestep)
             
             obs = next_obs
             
@@ -375,6 +389,7 @@ class TrainingLoop:
         ppo_stats = self.ppo.get_stats()
         selfplay_stats = self.selfplay_manager.get_stats()
         
+        # Basic stats
         self.logger.log_dict({
             "timestep": self.timestep,
             "episode": self.episode,
@@ -382,9 +397,29 @@ class TrainingLoop:
             "avg_reward": buffer_stats.get("avg_reward_per_episode", 0.0)
         })
         
+        # PPO stats (if available)
+        if ppo_stats.get("ent_coef"):
+            latest_ent = ppo_stats["ent_coef"][-1] if ppo_stats["ent_coef"] else 0.0
+            self.logger.log_scalar("train/entropy_coef", latest_ent, self.timestep)
+        
+        if ppo_stats.get("policy_loss"):
+            latest_policy_loss = ppo_stats["policy_loss"][-1] if ppo_stats["policy_loss"] else 0.0
+            self.logger.log_scalar("train/policy_loss", latest_policy_loss, self.timestep)
+        
+        if ppo_stats.get("value_loss"):
+            latest_value_loss = ppo_stats["value_loss"][-1] if ppo_stats["value_loss"] else 0.0
+            self.logger.log_scalar("train/value_loss", latest_value_loss, self.timestep)
+        
+        if ppo_stats.get("gae_lambda"):
+            latest_gae = ppo_stats["gae_lambda"][-1] if ppo_stats["gae_lambda"] else 0.95
+            self.logger.log_scalar("train/gae_lambda", latest_gae, self.timestep)
+        
         self.logger.flush()
         
-        logger.info(f"Timestep: {self.timestep}, Episode: {self.episode}")
+        logger.info(
+            f"Timestep: {self.timestep}, Episode: {self.episode}, "
+            f"Buffer: {buffer_stats['size']}, Avg Reward: {buffer_stats.get('avg_reward_per_episode', 0.0):.2f}"
+        )
     
     def _save_checkpoint(self, is_best: bool = False):
         """Save checkpoint.
