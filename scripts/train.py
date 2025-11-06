@@ -321,6 +321,11 @@ def main():
         logger.info(f"Overriding total timesteps: {args.timesteps}")
     
     if args.device is not None:
+        # Validate CUDA availability
+        import torch
+        if args.device == 'cuda' and not torch.cuda.is_available():
+            logger.warning("CUDA requested but not available, falling back to CPU")
+            args.device = 'cpu'
         overrides.setdefault('inference', {})['device'] = args.device
         logger.info(f"Overriding device: {args.device}")
     
@@ -379,6 +384,12 @@ def main():
     
     # Update config with final log directory
     config_manager.config.logging.log_dir = str(log_dir)
+    
+    # Validate and fallback device if needed
+    import torch
+    if config.inference.device == 'cuda' and not torch.cuda.is_available():
+        logger.warning("CUDA requested in config but not available, falling back to CPU")
+        config_manager.config.inference.device = 'cpu'
     
     # Save run metadata
     save_run_metadata(log_dir, config.to_dict(), args)
