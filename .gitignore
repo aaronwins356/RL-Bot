@@ -20,10 +20,10 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual environments
-venv/
-ENV/
-env/
+# Virtual environments (root level only)
+/venv/
+/ENV/
+/env/
 
 # IDE
 .vscode/
