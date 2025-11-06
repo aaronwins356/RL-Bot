@@ -20,7 +20,7 @@ from core.infra.checkpoints import CheckpointManager
 logger = logging.getLogger(__name__)
 
 # Constants
-OBS_SIZE = 173  # Standard observation size (placeholder - should come from encoder)
+OBS_SIZE = 180  # Standard observation size from ObservationEncoder
 DEFAULT_EVAL_GAMES = 25  # Default number of games per opponent during evaluation
 
 
@@ -58,9 +58,12 @@ class TrainingLoop:
             torch.manual_seed(seed)
             np.random.seed(seed)
         
-        # Device - check CUDA availability
+        # Device - check CUDA availability and handle "auto"
         device_str = config.device
-        if device_str == "cuda" and not torch.cuda.is_available():
+        if device_str == "auto":
+            device_str = "cuda" if torch.cuda.is_available() else "cpu"
+            logger.info(f"Auto-detected device: {device_str}")
+        elif device_str == "cuda" and not torch.cuda.is_available():
             logger.warning("CUDA requested but not available, falling back to CPU")
             device_str = "cpu"
         self.device = torch.device(device_str)
@@ -266,21 +269,27 @@ class TrainingLoop:
                 # Calculate action entropy for logging
                 action_entropy = 0.0
                 
-                # Sample actions
+                # Sample actions - cat_probs has shape (batch=1, n_cat, 3)
+                # ber_probs has shape (batch=1, n_ber, 2)
                 cat_actions = []
-                for probs in cat_probs:
+                cat_probs_batch = cat_probs[0]  # Get first (only) batch element -> (n_cat, 3)
+                for i in range(cat_probs_batch.shape[0]):
+                    probs = cat_probs_batch[i]  # Shape: (3,)
                     cat_dist = torch.distributions.Categorical(probs)
                     cat_actions.append(cat_dist.sample().item())
                     action_entropy += cat_dist.entropy().item()
                 
                 ber_actions = []
-                for probs in ber_probs:
-                    ber_dist = torch.distributions.Bernoulli(probs)
-                    ber_actions.append(ber_dist.sample().item())
+                ber_probs_batch = ber_probs[0]  # Get first (only) batch element -> (n_ber, 2)
+                for i in range(ber_probs_batch.shape[0]):
+                    probs = ber_probs_batch[i]  # Shape: (2,) - [prob_0, prob_1]
+                    # Bernoulli takes probability of action=1
+                    ber_dist = torch.distributions.Bernoulli(probs[1])
+                    ber_actions.append(int(ber_dist.sample().item()))
                     action_entropy += ber_dist.entropy().item()
                 
                 # Average entropy
-                num_actions = len(cat_probs) + len(ber_probs)
+                num_actions = cat_probs_batch.shape[0] + ber_probs_batch.shape[0]
                 avg_action_entropy = action_entropy / max(1, num_actions)
                 
                 # Convert to action array
