@@ -295,7 +295,7 @@ def main():
     config = config_manager.config
     
     # Get log directory
-    log_dir = Path(config.get('logging', {}).get('log_dir', args.logdir or 'logs'))
+    log_dir = Path(config_manager.get_safe('logging.log_dir', args.logdir or 'logs'))
     
     # Save run metadata
     save_run_metadata(log_dir, config.to_dict(), args)

@@ -4,6 +4,7 @@ This module implements the main training loop with PPO.
 """
 import torch
 import numpy as np
+import logging
 from typing import Dict, Any, Optional
 from pathlib import Path
 
@@ -15,6 +16,11 @@ from core.training.eval import EloEvaluator
 from core.infra.config import Config
 from core.infra.logging import MetricsLogger
 from core.infra.checkpoints import CheckpointManager
+
+logger = logging.getLogger(__name__)
+
+# Constants
+OBS_SIZE = 173  # Standard observation size (placeholder - should come from encoder)
 
 
 class TrainingLoop:
@@ -98,10 +104,10 @@ class TrainingLoop:
         pretrain_lr = offline_config.get("pretrain_lr", 1e-3)
         
         if not dataset_path.exists():
-            print(f"Warning: Offline dataset not found at {dataset_path}, skipping pretraining")
+            logger.warning(f"Offline dataset not found at {dataset_path}, skipping pretraining")
             return
         
-        print(f"Starting offline pretraining for {pretrain_epochs} epochs...")
+        logger.info(f"Starting offline pretraining for {pretrain_epochs} epochs...")
         
         try:
             from core.training.offline_dataset import OfflineDataset
@@ -140,12 +146,12 @@ class TrainingLoop:
                     num_batches += 1
                 
                 avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
-                print(f"  Epoch {epoch+1}/{pretrain_epochs}, Loss: {avg_loss:.4f}")
+                logger.info(f"  Epoch {epoch+1}/{pretrain_epochs}, Loss: {avg_loss:.4f}")
             
-            print(f"Offline pretraining completed!")
+            logger.info("Offline pretraining completed!")
             
         except Exception as e:
-            print(f"Warning: Offline pretraining failed: {e}")
+            logger.warning(f"Offline pretraining failed: {e}")
     
     def _create_model(self) -> ActorCriticNet:
         """Create model from config.
@@ -155,11 +161,8 @@ class TrainingLoop:
         """
         network_config = self.config.raw_config.get("network", {})
         
-        # TODO: Get actual observation size from encoder
-        obs_size = 173  # Placeholder
-        
         model = ActorCriticNet(
-            input_size=obs_size,
+            input_size=OBS_SIZE,
             hidden_sizes=self.config.hidden_sizes,
             action_categoricals=5,
             action_bernoullis=3,
@@ -177,19 +180,19 @@ class TrainingLoop:
         """
         total_timesteps = total_timesteps or self.config.total_timesteps
         
-        print(f"Starting training for {total_timesteps} timesteps")
-        print(f"Device: {self.device}")
-        print(f"Model: {sum(p.numel() for p in self.model.parameters())} parameters")
+        logger.info(f"Starting training for {total_timesteps} timesteps")
+        logger.info(f"Device: {self.device}")
+        logger.info(f"Model: {sum(p.numel() for p in self.model.parameters())} parameters")
         
         if self.curriculum_manager:
-            print(f"Curriculum learning enabled with {len(self.curriculum_manager.stages)} stages")
+            logger.info(f"Curriculum learning enabled with {len(self.curriculum_manager.stages)} stages")
         
         while self.timestep < total_timesteps:
             # Check curriculum stage transitions
             if self.curriculum_manager:
                 if self.curriculum_manager.should_transition(self.timestep):
                     stage = self.curriculum_manager.get_current_stage(self.timestep)
-                    print(f"Transitioned to curriculum stage: {stage.name}")
+                    logger.info(f"Transitioned to curriculum stage: {stage.name}")
             
             # Collect experience (would need environment)
             # For now, this is a placeholder
@@ -214,7 +217,7 @@ class TrainingLoop:
             
             self.timestep += 1
         
-        print("Training complete!")
+        logger.info("Training complete!")
         self._save_checkpoint(is_final=True)
     
     def _update(self):
@@ -258,7 +261,7 @@ class TrainingLoop:
         
         self.logger.flush()
         
-        print(f"Timestep: {self.timestep}, Episode: {self.episode}")
+        logger.info(f"Timestep: {self.timestep}, Episode: {self.episode}")
     
     def _save_checkpoint(self, is_final: bool = False):
         """Save checkpoint."""
@@ -295,4 +298,4 @@ class TrainingLoop:
         
         self.logger.flush()
         
-        print(f"Evaluation - Elo: {self.evaluator.get_elo():.0f}")
+        logger.info(f"Evaluation - Elo: {self.evaluator.get_elo():.0f}")

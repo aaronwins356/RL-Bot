@@ -11,6 +11,9 @@ from core.infra.config import load_config
 from core.training.train_loop import TrainingLoop
 from core.models.nets import ActorCriticNet
 
+# Constants
+OBS_SIZE = 173  # Standard observation size for RL-Bot
+
 
 @pytest.fixture
 def test_config():
@@ -125,8 +128,7 @@ def test_model_produces_valid_outputs(test_config):
         
         # Create dummy observation
         batch_size = 4
-        obs_size = 173  # As defined in train_loop.py
-        obs = torch.randn(batch_size, obs_size)
+        obs = torch.randn(batch_size, OBS_SIZE)
         
         with torch.no_grad():
             # Test value prediction
@@ -146,7 +148,7 @@ def test_inference_time_under_2ms():
     """Test that inference time is under 2ms."""
     # Create a small model for inference timing
     model = ActorCriticNet(
-        input_size=173,
+        input_size=OBS_SIZE,
         hidden_sizes=[256, 256],
         action_categoricals=5,
         action_bernoullis=3,
@@ -156,7 +158,7 @@ def test_inference_time_under_2ms():
     model.eval()
     
     # Warm up
-    obs = torch.randn(1, 173)
+    obs = torch.randn(1, OBS_SIZE)
     for _ in range(10):
         with torch.no_grad():
             _ = model.get_value(obs)
@@ -179,7 +181,7 @@ def test_inference_time_under_2ms():
 def test_model_parameter_count():
     """Test that model has reasonable parameter count."""
     model = ActorCriticNet(
-        input_size=173,
+        input_size=OBS_SIZE,
         hidden_sizes=[512, 512, 256],
         action_categoricals=5,
         action_bernoullis=3,
