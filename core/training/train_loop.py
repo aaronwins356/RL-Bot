@@ -269,13 +269,14 @@ class TrainingLoop:
                 # Calculate action entropy for logging
                 action_entropy = 0.0
                 
-                # Sample actions - cat_probs has shape (batch=1, n_cat, 3)
+                # Sample actions - cat_probs has shape (batch=1, n_cat, n_cat_options)
                 # ber_probs has shape (batch=1, n_ber, 2)
+                # where n_cat_options is typically 3 for discrete actions
                 cat_actions = []
                 cat_log_probs = []
-                cat_probs_batch = cat_probs[0]  # Get first (only) batch element -> (n_cat, 3)
+                cat_probs_batch = cat_probs[0]  # Get first (only) batch element -> (n_cat, n_cat_options)
                 for i in range(cat_probs_batch.shape[0]):
-                    probs = cat_probs_batch[i]  # Shape: (3,)
+                    probs = cat_probs_batch[i]  # Shape: (n_cat_options,)
                     cat_dist = torch.distributions.Categorical(probs)
                     action_sample = cat_dist.sample()
                     cat_actions.append(action_sample.item())
@@ -423,11 +424,16 @@ class TrainingLoop:
                 device=self.device
             )
             # Extract old values from trajectory (stored in buffer)
-            # Use list() to convert deque to list for slicing
-            buffer_list = list(self.buffer.buffer)
+            # Use itertools.islice for efficient deque slicing without full conversion
+            from itertools import islice
             n_traj = len(trajectory["observations"])
+            start_idx = max(0, len(self.buffer.buffer) - n_traj)
+            old_values_list = [
+                exp['value'] for exp in islice(self.buffer.buffer, start_idx, None) 
+                if 'value' in exp
+            ]
             old_values = torch.tensor(
-                np.array([exp['value'] for exp in buffer_list[-n_traj:] if 'value' in exp]),
+                np.array(old_values_list),
                 dtype=torch.float32,
                 device=self.device
             )

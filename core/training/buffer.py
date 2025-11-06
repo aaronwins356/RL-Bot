@@ -152,7 +152,11 @@ class ReplayBuffer:
             trajectory["actions"].insert(0, exp["action"])
             trajectory["rewards"].insert(0, exp["reward"])
             # Handle next_observation - use current obs if not stored
-            next_obs = exp.get("next_observation", exp["observation"])
+            if "next_observation" in exp:
+                next_obs = exp["next_observation"]
+            else:
+                next_obs = exp["observation"]
+                # Note: Using current obs as fallback - this may affect temporal accuracy
             trajectory["next_observations"].insert(0, next_obs)
             trajectory["dones"].insert(0, exp["done"])
             
