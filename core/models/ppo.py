@@ -24,16 +24,19 @@ class PPO:
     def __init__(
         self,
         model: ActorCriticNet,
-        config: Optional[Dict[str, Any]] = None
+        config: Optional[Dict[str, Any]] = None,
+        use_amp: bool = False
     ):
         """Initialize PPO.
         
         Args:
             model: Actor-critic network
             config: Training configuration
+            use_amp: Use automatic mixed precision training
         """
         self.model = model
         self.config = config or {}
+        self.use_amp = use_amp
         
         # Hyperparameters
         self.learning_rate = self.config.get("learning_rate", 3e-4)
@@ -243,55 +246,105 @@ class PPO:
         
         # Multiple epochs over the batch
         for epoch in range(self.n_epochs):
-            # Forward pass
-            cat_probs, ber_probs, values, _, _ = self.model(observations)
-            
-            # Compute new log probs
-            new_log_probs_cat = self._compute_log_probs_categorical(
-                cat_probs, actions_cat
-            )
-            new_log_probs_ber = self._compute_log_probs_bernoulli(
-                ber_probs, actions_ber
-            )
-            
-            # Compute ratio (pi_new / pi_old)
-            ratio_cat = torch.exp(new_log_probs_cat - old_log_probs_cat)
-            ratio_ber = torch.exp(new_log_probs_ber - old_log_probs_ber)
-            ratio = ratio_cat.mean(dim=1) * ratio_ber.mean(dim=1)  # Combine ratios
-            
-            # Clipped surrogate objective
-            surr1 = ratio * advantages
-            surr2 = torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range) * advantages
-            policy_loss = -torch.min(surr1, surr2).mean()
-            
-            # Value loss (clipped)
-            values = values.squeeze()
-            value_pred_clipped = old_values + torch.clamp(
-                values - old_values,
-                -self.clip_range,
-                self.clip_range
-            )
-            value_loss1 = (values - returns).pow(2)
-            value_loss2 = (value_pred_clipped - returns).pow(2)
-            value_loss = 0.5 * torch.max(value_loss1, value_loss2).mean()
-            
-            # Entropy loss (for exploration)
-            entropy_cat = self._compute_entropy_categorical(cat_probs)
-            entropy_ber = self._compute_entropy_bernoulli(ber_probs)
-            entropy_loss = -(entropy_cat + entropy_ber).mean()
-            
-            # Total loss
-            total_loss = (
-                policy_loss +
-                self.vf_coef * value_loss +
-                self.ent_coef * entropy_loss
-            )
+            # Forward pass with optional mixed precision
+            if self.use_amp:
+                with torch.cuda.amp.autocast():
+                    cat_probs, ber_probs, values, _, _ = self.model(observations)
+                    
+                    # Compute new log probs
+                    new_log_probs_cat = self._compute_log_probs_categorical(
+                        cat_probs, actions_cat
+                    )
+                    new_log_probs_ber = self._compute_log_probs_bernoulli(
+                        ber_probs, actions_ber
+                    )
+                    
+                    # Compute ratio (pi_new / pi_old)
+                    ratio_cat = torch.exp(new_log_probs_cat - old_log_probs_cat)
+                    ratio_ber = torch.exp(new_log_probs_ber - old_log_probs_ber)
+                    ratio = ratio_cat.mean(dim=1) * ratio_ber.mean(dim=1)  # Combine ratios
+                    
+                    # Clipped surrogate objective
+                    surr1 = ratio * advantages
+                    surr2 = torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range) * advantages
+                    policy_loss = -torch.min(surr1, surr2).mean()
+                    
+                    # Value loss (clipped)
+                    values = values.squeeze()
+                    value_pred_clipped = old_values + torch.clamp(
+                        values - old_values,
+                        -self.clip_range,
+                        self.clip_range
+                    )
+                    value_loss1 = (values - returns).pow(2)
+                    value_loss2 = (value_pred_clipped - returns).pow(2)
+                    value_loss = 0.5 * torch.max(value_loss1, value_loss2).mean()
+                    
+                    # Entropy loss (for exploration)
+                    entropy_cat = self._compute_entropy_categorical(cat_probs)
+                    entropy_ber = self._compute_entropy_bernoulli(ber_probs)
+                    entropy_loss = -(entropy_cat + entropy_ber).mean()
+                    
+                    # Total loss
+                    total_loss = (
+                        policy_loss +
+                        self.vf_coef * value_loss +
+                        self.ent_coef * entropy_loss
+                    )
+            else:
+                # Standard precision
+                cat_probs, ber_probs, values, _, _ = self.model(observations)
+                
+                # Compute new log probs
+                new_log_probs_cat = self._compute_log_probs_categorical(
+                    cat_probs, actions_cat
+                )
+                new_log_probs_ber = self._compute_log_probs_bernoulli(
+                    ber_probs, actions_ber
+                )
+                
+                # Compute ratio (pi_new / pi_old)
+                ratio_cat = torch.exp(new_log_probs_cat - old_log_probs_cat)
+                ratio_ber = torch.exp(new_log_probs_ber - old_log_probs_ber)
+                ratio = ratio_cat.mean(dim=1) * ratio_ber.mean(dim=1)  # Combine ratios
+                
+                # Clipped surrogate objective
+                surr1 = ratio * advantages
+                surr2 = torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range) * advantages
+                policy_loss = -torch.min(surr1, surr2).mean()
+                
+                # Value loss (clipped)
+                values = values.squeeze()
+                value_pred_clipped = old_values + torch.clamp(
+                    values - old_values,
+                    -self.clip_range,
+                    self.clip_range
+                )
+                value_loss1 = (values - returns).pow(2)
+                value_loss2 = (value_pred_clipped - returns).pow(2)
+                value_loss = 0.5 * torch.max(value_loss1, value_loss2).mean()
+                
+                # Entropy loss (for exploration)
+                entropy_cat = self._compute_entropy_categorical(cat_probs)
+                entropy_ber = self._compute_entropy_bernoulli(ber_probs)
+                entropy_loss = -(entropy_cat + entropy_ber).mean()
+                
+                # Total loss
+                total_loss = (
+                    policy_loss +
+                    self.vf_coef * value_loss +
+                    self.ent_coef * entropy_loss
+                )
             
             # Optimization step
             self.optimizer.zero_grad()
             total_loss.backward()
             nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
             self.optimizer.step()
+            
+            # GPU synchronization for consistent timing
+            if self.use_amp and torch.cuda.is_available():
+                torch.cuda.synchronize()
             
             # Track stats
             with torch.no_grad():

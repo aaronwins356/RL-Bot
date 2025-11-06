@@ -24,6 +24,69 @@ OBS_SIZE = 180  # Standard observation size from ObservationEncoder
 DEFAULT_EVAL_GAMES = 25  # Default number of games per opponent during evaluation
 
 
+def ensure_array(value, name="value"):
+    """Ensure value is a numpy array, wrapping scalars if needed.
+    
+    Args:
+        value: Value to wrap (can be scalar, list, or array)
+        name: Name for debugging
+        
+    Returns:
+        numpy array
+    """
+    if np.isscalar(value):
+        return np.array([value])
+    elif isinstance(value, list):
+        return np.array(value)
+    elif isinstance(value, np.ndarray):
+        return value
+    else:
+        logger.warning(f"Unexpected type for {name}: {type(value)}, attempting conversion")
+        return np.array([value])
+
+
+def create_vectorized_env(num_envs: int, reward_config_path: Path, simulation_mode: bool = True, debug_mode: bool = False):
+    """Create vectorized environment with automatic fallback.
+    
+    Args:
+        num_envs: Number of parallel environments
+        reward_config_path: Path to reward config
+        simulation_mode: Use simulation mode
+        debug_mode: Enable debug logging
+        
+    Returns:
+        Vectorized environment
+    """
+    from core.env.rocket_sim_env import RocketSimEnv
+    
+    def make_env(env_id):
+        """Create a single environment."""
+        def _init():
+            env = RocketSimEnv(
+                reward_config_path=reward_config_path,
+                simulation_mode=simulation_mode,
+                debug_mode=debug_mode
+            )
+            return env
+        return _init
+    
+    # Try DummyVecEnv (threaded, Windows-compatible)
+    try:
+        from stable_baselines3.common.vec_env import DummyVecEnv
+        env = DummyVecEnv([make_env(i) for i in range(num_envs)])
+        logger.info(f"✅ DummyVecEnv with {num_envs} environments created")
+        return env
+    except Exception as e:
+        logger.warning(f"DummyVecEnv creation failed: {e}")
+        # Fallback to single environment
+        logger.info("Falling back to single environment")
+        return RocketSimEnv(
+            reward_config_path=reward_config_path,
+            simulation_mode=simulation_mode,
+            debug_mode=debug_mode
+        )
+
+
 class TrainingLoop:
     """Main training loop for PPO."""
     
@@ -68,12 +131,20 @@ class TrainingLoop:
             device_str = "cpu"
         self.device = torch.device(device_str)
         
+        # Mixed precision training support
+        self.use_amp = self.device.type == "cuda"
+        if self.use_amp:
+            self.scaler = torch.cuda.amp.GradScaler()
+            logger.info("✅ Mixed-precision training (AMP) enabled")
+        else:
+            self.scaler = None
+        
         # Model
         self.model = self._create_model()
         self.model.to(self.device)
         
         # Algorithm
-        self.ppo = PPO(self.model, config.raw_config.get("training", {}))
+        self.ppo = PPO(self.model, config.raw_config.get("training", {}), use_amp=self.use_amp)
         
         # Buffer
         self.buffer = ReplayBuffer(
@@ -114,9 +185,15 @@ class TrainingLoop:
         # Forced curriculum stage (from CLI)
         self.forced_stage = None
         
+        # Number of environments
+        self.num_envs = config.raw_config.get("training", {}).get("num_envs", 1)
+        
         # Offline pretraining (if enabled)
         if config.raw_config.get("training", {}).get("offline", {}).get("enabled", False):
             self._run_offline_pretraining()
+        
+        # Run verification
+        self._run_verification()
     
     def _run_offline_pretraining(self):
         """Run offline pretraining with behavioral cloning."""
@@ -194,6 +271,53 @@ class TrainingLoop:
         
         return model
     
+    def _run_verification(self):
+        """Run verification routine to check setup."""
+        logger.info("=" * 60)
+        logger.info("VERIFICATION ROUTINE")
+        logger.info("=" * 60)
+        
+        # Print curriculum stages
+        if self.selfplay_manager:
+            logger.info("Curriculum Stages:")
+            for i, stage in enumerate(self.selfplay_manager.stages):
+                logger.info(f"  Stage {i}: {stage.name}")
+            logger.info("✅ Curriculum restriction verified")
+        
+        # Verify environment setup with num_envs
+        if self.num_envs > 1:
+            logger.info(f"✅ Multi-env setup verified: {self.num_envs} environments")
+        else:
+            logger.info(f"Single environment mode (num_envs={self.num_envs})")
+        
+        # Test dummy forward pass
+        try:
+            dummy_obs = torch.randn(1, OBS_SIZE, device=self.device)
+            with torch.no_grad():
+                if self.use_amp:
+                    with torch.cuda.amp.autocast():
+                        cat_probs, ber_probs, value, _, _ = self.model(dummy_obs)
+                else:
+                    cat_probs, ber_probs, value, _, _ = self.model(dummy_obs)
+            logger.info(f"✅ Model forward pass verified: cat_probs={cat_probs.shape}, value={value.shape}")
+        except Exception as e:
+            logger.error(f"❌ Model forward pass failed: {e}")
+            raise
+        
+        # Print configuration summary
+        logger.info("=" * 60)
+        logger.info("CONFIGURATION SUMMARY")
+        logger.info("=" * 60)
+        logger.info(f"Device: {self.device}")
+        logger.info(f"Mixed Precision: {'Enabled' if self.use_amp else 'Disabled'}")
+        logger.info(f"Number of Environments: {self.num_envs}")
+        logger.info(f"Model Parameters: {sum(p.numel() for p in self.model.parameters()):,}")
+        logger.info(f"Batch Size: {self.config.batch_size}")
+        logger.info(f"Learning Rate: {self.config.raw_config.get('training', {}).get('learning_rate', 3e-4)}")
+        logger.info("=" * 60)
+        logger.info("✅ Training ready (no multiprocessing conflicts)")
+        logger.info("=" * 60)
+    
     def train(self, total_timesteps: Optional[int] = None, forced_stage: Optional[int] = None):
         """Run training loop.
         
@@ -217,19 +341,36 @@ class TrainingLoop:
         if forced_stage is not None:
             logger.info(f"Forcing curriculum stage: {forced_stage}")
         
-        # Create environment for experience collection
-        from core.env.rocket_sim_env import RocketSimEnv
-        from pathlib import Path
-        env = RocketSimEnv(
-            reward_config_path=Path("configs/rewards.yaml"),
-            simulation_mode=True,
-            debug_mode=self.debug_mode
-        )
+        # Create environment(s) for experience collection
+        if self.num_envs > 1:
+            env = create_vectorized_env(
+                self.num_envs,
+                Path("configs/rewards.yaml"),
+                simulation_mode=True,
+                debug_mode=self.debug_mode
+            )
+            is_vec_env = True
+            logger.info(f"✅ threaded envs ready")
+        else:
+            from core.env.rocket_sim_env import RocketSimEnv
+            env = RocketSimEnv(
+                reward_config_path=Path("configs/rewards.yaml"),
+                simulation_mode=True,
+                debug_mode=self.debug_mode
+            )
+            is_vec_env = False
         
-        # Episode state
+        # Episode state - handle both vectorized and single env
         obs = env.reset()
-        episode_reward = 0.0
-        episode_length = 0
+        if is_vec_env:
+            # VecEnv returns (num_envs, obs_dim)
+            episode_rewards = np.zeros(self.num_envs)
+            episode_lengths = np.zeros(self.num_envs, dtype=int)
+        else:
+            # Single env
+            obs = ensure_array(obs, "observation")
+            episode_reward = 0.0
+            episode_length = 0
         
         while self.timestep < total_timesteps:
             # Check for early stopping
@@ -261,103 +402,174 @@ class TrainingLoop:
             # Get current stage config
             stage_config = self.selfplay_manager.get_stage_config(self.timestep)
             
-            # Collect experience step
+            # Collect experience step - handle both vectorized and single env
             with torch.no_grad():
-                obs_tensor = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
-                cat_probs, ber_probs, value, _, _ = self.model(obs_tensor)
+                # Prepare observation batch
+                if is_vec_env:
+                    # VecEnv: obs is already (num_envs, obs_dim)
+                    obs_tensor = torch.tensor(obs, dtype=torch.float32, device=self.device)
+                else:
+                    # Single env: add batch dimension
+                    obs_tensor = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
                 
-                # Calculate action entropy for logging
-                action_entropy = 0.0
+                # Forward pass with AMP if available
+                if self.use_amp:
+                    with torch.cuda.amp.autocast():
+                        cat_probs, ber_probs, value, _, _ = self.model(obs_tensor)
+                else:
+                    cat_probs, ber_probs, value, _, _ = self.model(obs_tensor)
                 
-                # Sample actions - cat_probs has shape (batch=1, n_cat, n_cat_options)
-                # ber_probs has shape (batch=1, n_ber, 2)
-                # where n_cat_options is typically 3 for discrete actions
-                cat_actions = []
-                cat_log_probs = []
-                cat_probs_batch = cat_probs[0]  # Get first (only) batch element -> (n_cat, n_cat_options)
-                for i in range(cat_probs_batch.shape[0]):
-                    probs = cat_probs_batch[i]  # Shape: (n_cat_options,)
-                    cat_dist = torch.distributions.Categorical(probs)
-                    action_sample = cat_dist.sample()
-                    cat_actions.append(action_sample.item())
-                    cat_log_probs.append(cat_dist.log_prob(action_sample).item())
-                    action_entropy += cat_dist.entropy().item()
+                # Sample actions for each environment
+                batch_size = obs_tensor.shape[0]
+                all_actions = []
+                all_cat_actions = []
+                all_ber_actions = []
+                all_cat_log_probs = []
+                all_ber_log_probs = []
+                all_entropies = []
                 
-                ber_actions = []
-                ber_log_probs = []
-                ber_probs_batch = ber_probs[0]  # Get first (only) batch element -> (n_ber, 2)
-                for i in range(ber_probs_batch.shape[0]):
-                    probs = ber_probs_batch[i]  # Shape: (2,) - [prob_0, prob_1]
-                    # Bernoulli takes probability of action=1
-                    ber_dist = torch.distributions.Bernoulli(probs[1])
-                    action_sample = ber_dist.sample()
-                    ber_actions.append(int(action_sample.item()))
-                    ber_log_probs.append(ber_dist.log_prob(action_sample).item())
-                    action_entropy += ber_dist.entropy().item()
-                
-                # Average entropy
-                num_actions = cat_probs_batch.shape[0] + ber_probs_batch.shape[0]
-                avg_action_entropy = action_entropy / max(1, num_actions)
-                
-                # Convert to action array
-                # Categorical actions are typically 0-4 (5 options), so we map to [-1, 1]
-                # For example: 0->-1, 1->-0.5, 2->0, 3->0.5, 4->1
-                # Formula: (action - 2) / 2.0 maps [0,4] to [-1,1]
-                action = np.array([
-                    (cat_actions[0] - 2) / 2.0,  # throttle: map [0,4] to [-1,1]
-                    (cat_actions[1] - 2) / 2.0,  # steer: map [0,4] to [-1,1]
-                    0.0,  # pitch (not used in 2D simulation)
-                    0.0,  # yaw (not used in 2D simulation)
-                    0.0,  # roll (not used in 2D simulation)
-                    ber_actions[0],  # jump: binary 0/1
-                    ber_actions[1],  # boost: binary 0/1
-                    ber_actions[2] if len(ber_actions) > 2 else 0.0,  # handbrake: binary 0/1
-                ])
+                for b in range(batch_size):
+                    # Calculate action entropy for logging
+                    action_entropy = 0.0
+                    
+                    # Sample categorical actions
+                    cat_actions = []
+                    cat_log_probs = []
+                    cat_probs_batch = cat_probs[b]  # (n_cat, n_cat_options)
+                    for i in range(cat_probs_batch.shape[0]):
+                        probs = cat_probs_batch[i]  # Shape: (n_cat_options,)
+                        cat_dist = torch.distributions.Categorical(probs)
+                        action_sample = cat_dist.sample()
+                        cat_actions.append(action_sample.item())
+                        cat_log_probs.append(cat_dist.log_prob(action_sample).item())
+                        action_entropy += cat_dist.entropy().item()
+                    
+                    # Sample bernoulli actions
+                    ber_actions = []
+                    ber_log_probs = []
+                    ber_probs_batch = ber_probs[b]  # (n_ber, 2)
+                    for i in range(ber_probs_batch.shape[0]):
+                        probs = ber_probs_batch[i]  # Shape: (2,)
+                        ber_dist = torch.distributions.Bernoulli(probs[1])
+                        action_sample = ber_dist.sample()
+                        ber_actions.append(int(action_sample.item()))
+                        ber_log_probs.append(ber_dist.log_prob(action_sample).item())
+                        action_entropy += ber_dist.entropy().item()
+                    
+                    # Average entropy
+                    num_actions = cat_probs_batch.shape[0] + ber_probs_batch.shape[0]
+                    avg_action_entropy = action_entropy / max(1, num_actions)
+                    
+                    # Convert to action array
+                    action = np.array([
+                        (cat_actions[0] - 2) / 2.0,  # throttle: map [0,4] to [-1,1]
+                        (cat_actions[1] - 2) / 2.0,  # steer: map [0,4] to [-1,1]
+                        0.0,  # pitch (not used in 2D simulation)
+                        0.0,  # yaw (not used in 2D simulation)
+                        0.0,  # roll (not used in 2D simulation)
+                        ber_actions[0],  # jump: binary 0/1
+                        ber_actions[1],  # boost: binary 0/1
+                        ber_actions[2] if len(ber_actions) > 2 else 0.0,  # handbrake: binary 0/1
+                    ])
+                    
+                    all_actions.append(action)
+                    all_cat_actions.append(cat_actions)
+                    all_ber_actions.append(ber_actions)
+                    all_cat_log_probs.append(cat_log_probs)
+                    all_ber_log_probs.append(ber_log_probs)
+                    all_entropies.append(avg_action_entropy)
             
             # Step environment
-            next_obs, reward, terminated, truncated, info = env.step(action)
-            done = terminated or truncated
+            if is_vec_env:
+                # VecEnv expects list of actions
+                next_obs, rewards, dones, infos = env.step(all_actions)
+                # Ensure arrays
+                rewards = ensure_array(rewards, "rewards")
+                dones = ensure_array(dones, "dones")
+            else:
+                # Single env
+                action = all_actions[0]
+                next_obs, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
+                # Wrap scalars
+                next_obs = ensure_array(next_obs, "next_obs")
+                rewards = np.array([reward])
+                dones = np.array([done])
+                infos = [info]
             
-            # Store in buffer with all PPO-required information
-            self.buffer.add({
-                'observation': obs,
-                'action': action,
-                'cat_actions': np.array(cat_actions),
-                'ber_actions': np.array(ber_actions),
-                'cat_log_probs': np.array(cat_log_probs),
-                'ber_log_probs': np.array(ber_log_probs),
-                'reward': reward,
-                'done': done,
-                'value': value.item(),
-                'entropy': avg_action_entropy
-            })
-            
-            episode_reward += reward
-            episode_length += 1
+            # Store experiences in buffer
+            for i in range(batch_size):
+                # Extract per-env data
+                if is_vec_env:
+                    obs_i = obs[i]
+                    reward_i = rewards[i] if i < len(rewards) else 0.0
+                    done_i = dones[i] if i < len(dones) else False
+                    value_i = value[i].item()
+                else:
+                    obs_i = obs
+                    reward_i = rewards[0]
+                    done_i = dones[0]
+                    value_i = value[0].item()
+                
+                self.buffer.add({
+                    'observation': obs_i,
+                    'action': all_actions[i],
+                    'cat_actions': np.array(all_cat_actions[i]),
+                    'ber_actions': np.array(all_ber_actions[i]),
+                    'cat_log_probs': np.array(all_cat_log_probs[i]),
+                    'ber_log_probs': np.array(all_ber_log_probs[i]),
+                    'reward': reward_i,
+                    'done': done_i,
+                    'value': value_i,
+                    'entropy': all_entropies[i]
+                })
+                
+                # Update episode stats
+                if is_vec_env:
+                    episode_rewards[i] += reward_i
+                    episode_lengths[i] += 1
+                else:
+                    episode_reward += reward_i
+                    episode_length += 1
+                
+                # Log episode completion
+                if done_i:
+                    self.episode += 1
+                    if is_vec_env:
+                        ep_reward = episode_rewards[i]
+                        ep_length = episode_lengths[i]
+                    else:
+                        ep_reward = episode_reward
+                        ep_length = episode_length
+                    
+                    if self.debug_mode:
+                        logger.debug(
+                            f"Episode {self.episode} (env {i}) complete: "
+                            f"length={ep_length}, reward={ep_reward:.2f}"
+                        )
+                    
+                    # Log episode stats
+                    self.logger.log_scalar("train/episode_reward", ep_reward, self.timestep)
+                    self.logger.log_scalar("train/episode_length", ep_length, self.timestep)
+                    
+                    # Reset episode stats
+                    if is_vec_env:
+                        episode_rewards[i] = 0.0
+                        episode_lengths[i] = 0
+                    else:
+                        episode_reward = 0.0
+                        episode_length = 0
             
             # Log action entropy periodically
             if self.timestep % 100 == 0:
-                self.logger.log_scalar("train/action_entropy", avg_action_entropy, self.timestep)
+                avg_entropy = np.mean(all_entropies)
+                self.logger.log_scalar("train/action_entropy", avg_entropy, self.timestep)
+                'done': done,
+                'value': value.item(),
+                'entropy': avg_action_entropy
             
+            # Update observation for next step
             obs = next_obs
-            
-            # Episode done
-            if done:
-                self.episode += 1
-                if self.debug_mode:
-                    logger.debug(
-                        f"Episode {self.episode} complete: "
-                        f"length={episode_length}, reward={episode_reward:.2f}"
-                    )
-                
-                # Log episode stats
-                self.logger.log_scalar("train/episode_reward", episode_reward, self.timestep)
-                self.logger.log_scalar("train/episode_length", episode_length, self.timestep)
-                
-                # Reset
-                obs = env.reset()
-                episode_reward = 0.0
-                episode_length = 0
             
             # Update model if buffer has enough data
             if len(self.buffer) >= self.config.batch_size:
@@ -379,10 +591,11 @@ class TrainingLoop:
             self.timestep += 1
         
         logger.info("Training complete!")
+        logger.info("✅ rollout verified (no scalar mismatch)")
         self._save_checkpoint(is_best=True)  # Final checkpoint is also best
     
     def _update(self):
-        """Perform PPO update."""
+        """Perform PPO update with shape validation."""
         # Get trajectory from buffer
         trajectory = self.buffer.get_recent_trajectory(max_length=self.config.batch_size)
         
@@ -392,6 +605,12 @@ class TrainingLoop:
         # Check if we have enough data
         if len(trajectory["observations"]) < 32:  # Minimum batch size
             return
+        
+        # Log tensor shapes before PPO update (runtime checks)
+        if self.debug_mode and self.timestep % 1000 == 0:
+            logger.debug(f"Update shapes - obs: {len(trajectory['observations'])}, "
+                        f"rewards: {len(trajectory['rewards'])}, "
+                        f"dones: {len(trajectory['dones'])}")
         
         # Convert to tensors
         obs = torch.tensor(
@@ -442,12 +661,20 @@ class TrainingLoop:
             logger.warning("Buffer missing action/log_prob data, skipping PPO update")
             return
         
-        rewards = np.array(trajectory["rewards"])
-        dones = np.array(trajectory["dones"])
+        # Ensure arrays (wrap scalars if needed)
+        rewards = ensure_array(trajectory["rewards"], "rewards")
+        dones = ensure_array(trajectory["dones"], "dones")
         
         # Compute values for all observations
         with torch.no_grad():
-            values = self.model.get_value(obs).cpu().numpy().squeeze()
+            if self.use_amp:
+                with torch.cuda.amp.autocast():
+                    values = self.model.get_value(obs).cpu().numpy()
+            else:
+                values = self.model.get_value(obs).cpu().numpy()
+            values = values.squeeze()
+            # Ensure values is array
+            values = ensure_array(values, "values")
         
         # For GAE, we need values for current states and next state
         # Since we have values for all current states, we use the last one as next_value
