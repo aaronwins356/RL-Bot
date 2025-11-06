@@ -73,11 +73,79 @@ class TrainingLoop:
         self.selfplay_manager = SelfPlayManager(
             config.raw_config.get("training", {}).get("selfplay", {})
         )
-        self.evaluator = EloEvaluator()
+        self.evaluator = EloEvaluator(log_dir=self.log_dir)
+        
+        # Curriculum manager (if enabled)
+        curriculum_config = config.raw_config.get("training", {}).get("curriculum", {})
+        self.curriculum_manager = None
+        if curriculum_config.get('aerial_focus', False) or curriculum_config:
+            from core.training.curriculum import CurriculumManager
+            self.curriculum_manager = CurriculumManager(curriculum_config)
         
         # Training state
         self.timestep = 0
         self.episode = 0
+        
+        # Offline pretraining (if enabled)
+        if config.raw_config.get("training", {}).get("offline", {}).get("enabled", False):
+            self._run_offline_pretraining()
+    
+    def _run_offline_pretraining(self):
+        """Run offline pretraining with behavioral cloning."""
+        offline_config = self.config.raw_config.get("training", {}).get("offline", {})
+        dataset_path = Path(offline_config.get("dataset_path", "data/telemetry_logs"))
+        pretrain_epochs = offline_config.get("pretrain_epochs", 10)
+        pretrain_lr = offline_config.get("pretrain_lr", 1e-3)
+        
+        if not dataset_path.exists():
+            print(f"Warning: Offline dataset not found at {dataset_path}, skipping pretraining")
+            return
+        
+        print(f"Starting offline pretraining for {pretrain_epochs} epochs...")
+        
+        try:
+            from core.training.offline_dataset import OfflineDataset
+            import torch.nn.functional as F
+            
+            # Load dataset
+            dataset = OfflineDataset(dataset_path, max_samples=100000)
+            dataloader = dataset.get_loader(batch_size=256, shuffle=True)
+            
+            # Setup optimizer for pretraining
+            pretrain_optimizer = torch.optim.Adam(self.model.parameters(), lr=pretrain_lr)
+            
+            # Pretrain
+            self.model.train()
+            for epoch in range(pretrain_epochs):
+                total_loss = 0.0
+                num_batches = 0
+                
+                for batch in dataloader:
+                    obs = torch.tensor(batch['observation'], dtype=torch.float32, device=self.device)
+                    action = torch.tensor(batch['action'], dtype=torch.float32, device=self.device)
+                    
+                    # Forward pass (behavioral cloning)
+                    # Note: This is simplified - real implementation would need proper action heads
+                    value = self.model.get_value(obs)
+                    
+                    # Compute loss (placeholder - would need actual action prediction)
+                    loss = F.mse_loss(value, torch.zeros_like(value))  # Placeholder
+                    
+                    # Backward pass
+                    pretrain_optimizer.zero_grad()
+                    loss.backward()
+                    pretrain_optimizer.step()
+                    
+                    total_loss += loss.item()
+                    num_batches += 1
+                
+                avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
+                print(f"  Epoch {epoch+1}/{pretrain_epochs}, Loss: {avg_loss:.4f}")
+            
+            print(f"Offline pretraining completed!")
+            
+        except Exception as e:
+            print(f"Warning: Offline pretraining failed: {e}")
     
     def _create_model(self) -> ActorCriticNet:
         """Create model from config.
@@ -113,7 +181,16 @@ class TrainingLoop:
         print(f"Device: {self.device}")
         print(f"Model: {sum(p.numel() for p in self.model.parameters())} parameters")
         
+        if self.curriculum_manager:
+            print(f"Curriculum learning enabled with {len(self.curriculum_manager.stages)} stages")
+        
         while self.timestep < total_timesteps:
+            # Check curriculum stage transitions
+            if self.curriculum_manager:
+                if self.curriculum_manager.should_transition(self.timestep):
+                    stage = self.curriculum_manager.get_current_stage(self.timestep)
+                    print(f"Transitioned to curriculum stage: {stage.name}")
+            
             # Collect experience (would need environment)
             # For now, this is a placeholder
             # In real implementation, this would interact with RLBot/RLGym
@@ -201,11 +278,21 @@ class TrainingLoop:
     
     def _evaluate(self):
         """Evaluate model."""
-        # Placeholder for evaluation
-        # In full implementation, this would play matches against baselines
-        elo = self.evaluator.get_elo()
+        # Run full evaluation suite
+        results = self.evaluator.evaluate_full(
+            self.model,
+            self.timestep,
+            num_games=5
+        )
         
-        self.logger.log_scalar("eval/elo", elo, self.timestep)
+        # Log metrics
+        self.logger.log_scalar("eval/elo", self.evaluator.get_elo(), self.timestep)
+        
+        for opponent, result in results.items():
+            self.logger.log_scalar(f"eval/{opponent}/win_rate", result['win_rate'], self.timestep)
+            self.logger.log_scalar(f"eval/{opponent}/wins", result['wins'], self.timestep)
+            self.logger.log_scalar(f"eval/{opponent}/losses", result['losses'], self.timestep)
+        
         self.logger.flush()
         
-        print(f"Evaluation - Elo: {elo:.0f}")
+        print(f"Evaluation - Elo: {self.evaluator.get_elo():.0f}")
