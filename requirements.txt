@@ -5,5 +5,19 @@ rlbot==1.*
 torch==2.0.1+cpu
 numpy
 
+# ML and training dependencies
+tensorboard>=2.10.0
+pyyaml>=6.0
+omegaconf>=2.3.0
+
+# Testing dependencies
+pytest>=7.0.0
+pytest-cov>=4.0.0
+
+# Code quality
+black>=22.0.0
+flake8>=5.0.0
+mypy>=0.990
+
 # This will cause pip to auto-upgrade and stop scaring people with warning messages
 pip

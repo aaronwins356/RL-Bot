@@ -1,0 +1,90 @@
+# Reward shaping configuration
+# All rewards are scaled by their respective weights
+
+# Sparse rewards
+sparse:
+  goal_scored: 10.0
+  goal_conceded: -10.0
+  shot_on_goal: 2.0
+  save: 3.0
+  demo: 1.0
+  demoed: -1.0
+
+# Dense rewards - Ball interaction
+ball:
+  touch_ball: 0.1
+  velocity_toward_ball: 0.05
+  distance_to_ball_change: 0.01  # reward for getting closer
+  ball_height_control: 0.1  # reward for keeping ball low/high based on context
+  
+# Dense rewards - Goal-oriented
+goal:
+  velocity_toward_enemy_goal: 0.1
+  velocity_toward_own_goal: -0.1  # penalty
+  ball_velocity_toward_enemy_goal: 0.2
+  shot_quality: 0.5  # based on angle, speed, etc.
+
+# Dense rewards - Positioning
+positioning:
+  optimal_position_reward: 0.05
+  rotation_discipline: 0.05
+  spacing_from_teammates: 0.03
+  defensive_positioning: 0.05
+  offensive_positioning: 0.03
+  midfield_control: 0.02
+
+# Dense rewards - Boost management
+boost:
+  pickup_small_pad: 0.05
+  pickup_large_pad: 0.15
+  boost_efficiency: 0.02  # reward for not wasting boost
+  boost_starve_opponent: 0.1  # deny opponent boost
+  boost_conservation: 0.01
+
+# Penalties - Bad behaviors
+penalties:
+  double_commit: -0.5  # two teammates going for same ball
+  overcommit: -0.3  # leaving goal open
+  boost_waste: -0.02  # using boost inefficiently
+  own_goal: -15.0
+  miss_easy_save: -2.0
+  whiff: -0.2  # missing the ball
+  
+  # Mechanical failures
+  bad_recovery: -0.1
+  flip_cancel_fail: -0.05
+  
+# Context-dependent multipliers
+multipliers:
+  kickoff_win: 1.5
+  overtime: 1.2
+  close_game: 1.1  # when score difference < 2
+  losing: 1.05  # when behind
+
+# Advanced shaping
+advanced:
+  # Reward for mechanical execution
+  speedflip_success: 0.2
+  wavedash_success: 0.1
+  fast_aerial_success: 0.15
+  
+  # Reward for game sense
+  shadow_defense: 0.1
+  fake_challenge: 0.15
+  boost_stealing: 0.1
+  
+  # Reward for team play (2v2, 3v3)
+  passing: 0.3
+  assist: 2.0
+  rotation: 0.05
+  
+  # Reward for consistency
+  possession_time: 0.01  # per second
+  time_in_attacking_third: 0.005
+  time_in_defensive_third: -0.002  # slight penalty to encourage pressure
+
+# Normalization settings
+normalization:
+  use_normalization: true
+  clip_rewards: true
+  clip_range: [-10.0, 10.0]
