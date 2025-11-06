@@ -12,6 +12,9 @@ training:
   ent_coef: 0.01
   max_grad_norm: 0.5
   
+  # Early stopping - extended patience for better convergence
+  early_stop_patience: 10  # Increased from 5 to 10 evaluations
+  
   # Self-play settings
   selfplay:
     enabled: true
@@ -68,6 +71,7 @@ logging:
   log_interval: 1000  # timesteps
   save_interval: 10000  # timesteps
   eval_interval: 50000  # timesteps
+  eval_num_games: 25  # Increased from default 5 to 25 for better Elo estimates
   
 checkpoints:
   save_dir: "checkpoints"

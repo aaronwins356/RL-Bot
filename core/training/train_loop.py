@@ -334,11 +334,14 @@ class TrainingLoop:
     
     def _evaluate(self):
         """Evaluate model and check for early stopping."""
+        # Get num_games from config (default to 25 if not specified)
+        num_games = self.config.raw_config.get('logging', {}).get('eval_num_games', 25)
+        
         # Run full evaluation suite
         results = self.evaluator.evaluate_full(
             self.model,
             self.timestep,
-            num_games=5
+            num_games=num_games
         )
         
         current_elo = self.evaluator.get_elo()
@@ -353,7 +356,7 @@ class TrainingLoop:
         
         self.logger.flush()
         
-        logger.info(f"Evaluation - Elo: {current_elo:.0f}")
+        logger.info(f"Evaluation - Elo: {current_elo:.0f} (after {num_games} games per opponent)")
         
         # Check for improvement
         if current_elo > self.best_elo:

@@ -35,6 +35,7 @@ class RocketSimEnv:
         spawn_opponents: bool = True,
         enable_aerial_training: bool = True,
         random_spawn: bool = True,
+        simulation_mode: bool = True,  # True for simulated episodes, False for real RocketSim
     ):
         """Initialize RocketSim environment.
         
@@ -45,12 +46,14 @@ class RocketSimEnv:
             spawn_opponents: Whether to spawn opponent bots
             enable_aerial_training: Enable aerial training scenarios
             random_spawn: Randomize spawn positions
+            simulation_mode: Use simplified simulation for training (True) or real RocketSim (False)
         """
         self.game_mode = game_mode
         self.tick_skip = tick_skip
         self.spawn_opponents = spawn_opponents
         self.enable_aerial_training = enable_aerial_training
         self.random_spawn = random_spawn
+        self.simulation_mode = simulation_mode
         
         # Load reward configuration
         if reward_config_path and reward_config_path.exists():
@@ -72,8 +75,16 @@ class RocketSimEnv:
         self.prev_ball_velocity_toward_goal = 0.0
         self.prev_boost = 100.0
         self.last_touch_time = 0.0
+        self.steps_since_last_touch = 0  # Track idle behavior
         self.aerial_attempts = 0
         self.aerial_successes = 0
+        
+        # Simulated game state (for simulation mode)
+        self.sim_ball_position = np.array([0.0, 0.0, 100.0])
+        self.sim_ball_velocity = np.array([0.0, 0.0, 0.0])
+        self.sim_car_position = np.array([0.0, -2000.0, 20.0])
+        self.sim_car_velocity = np.array([0.0, 0.0, 0.0])
+        self.sim_boost_amount = 33.0
         
         # Stats for reward calculation
         self.stats = {
@@ -94,6 +105,8 @@ class RocketSimEnv:
                 'goal_conceded': -10.0,
                 'demo_opponent': 1.0,
                 'demoed_self': -1.0,
+                'shot_on_goal': 2.0,
+                'save': 3.0,
             },
             'dense': {
                 'ball_velocity_toward_goal': 0.01,
@@ -102,12 +115,16 @@ class RocketSimEnv:
                 'boost_waste_penalty': -0.01,
                 'touch_bonus': 0.1,
                 'goal_proximity': 0.05,
+                'velocity_toward_ball': 0.02,
+                'distance_to_ball_decrease': 0.01,
             },
             'penalties': {
                 'own_goal_risk': -0.5,
                 'double_commit': -0.2,
                 'missed_aerial': -0.3,
                 'boost_starve': -0.1,
+                'idle_penalty': -0.05,  # Penalty for not touching ball
+                'driving_in_circles': -0.03,
             }
         }
     
@@ -127,14 +144,32 @@ class RocketSimEnv:
         self.episode_length = 0
         self.total_reward = 0.0
         self.prev_ball_velocity_toward_goal = 0.0
-        self.prev_boost = 100.0
+        self.prev_boost = 33.0  # Start with 33 boost (standard kickoff)
         self.last_touch_time = 0.0
+        self.steps_since_last_touch = 0
         self.aerial_attempts = 0
         self.aerial_successes = 0
         
         # Reset stats
         for key in self.stats:
             self.stats[key] = 0
+        
+        # Reset simulated state
+        if self.simulation_mode:
+            # Random kickoff positions
+            if self.random_spawn:
+                self.sim_car_position = np.array([
+                    np.random.uniform(-500, 500),
+                    np.random.uniform(-3000, -2000),
+                    20.0
+                ])
+            else:
+                self.sim_car_position = np.array([0.0, -2000.0, 20.0])
+            
+            self.sim_car_velocity = np.array([0.0, 0.0, 0.0])
+            self.sim_ball_position = np.array([0.0, 0.0, 100.0])
+            self.sim_ball_velocity = np.array([0.0, 0.0, 0.0])
+            self.sim_boost_amount = 33.0
         
         # Initialize game state
         # In a real implementation, this would initialize RocketSim
@@ -153,9 +188,14 @@ class RocketSimEnv:
             Tuple of (observation, reward, terminated, truncated, info)
         """
         self.episode_length += 1
+        self.steps_since_last_touch += 1
         
-        # Execute action in simulation (placeholder)
-        # In real implementation, would apply action to RocketSim
+        # Execute action in simulation (placeholder or real RocketSim)
+        if self.simulation_mode:
+            self._simulate_step(action)
+        else:
+            # In real implementation, would apply action to RocketSim
+            pass
         
         # Get new observation
         obs = self._get_observation()
@@ -174,9 +214,90 @@ class RocketSimEnv:
             'total_reward': self.total_reward,
             'stats': self.stats.copy(),
             'aerial_success_rate': self.aerial_successes / max(1, self.aerial_attempts),
+            'steps_since_touch': self.steps_since_last_touch,
         }
         
         return obs, reward, terminated, truncated, info
+    
+    def _simulate_step(self, action: np.ndarray):
+        """Simulate a simple physics step for training without RocketSim.
+        
+        Args:
+            action: Action array [throttle, steer, pitch, yaw, roll, jump, boost, handbrake]
+        """
+        # Extract action components
+        throttle = action[0] if len(action) > 0 else 0.0
+        steer = action[1] if len(action) > 1 else 0.0
+        boost = action[6] if len(action) > 6 else 0.0
+        
+        # Simple car physics
+        dt = 0.008 * self.tick_skip  # time step
+        speed = np.linalg.norm(self.sim_car_velocity)
+        max_speed = 2300.0  # Rocket League max speed
+        
+        # Acceleration
+        if throttle > 0 and boost > 0.5 and self.sim_boost_amount > 0:
+            # Boosting
+            accel = 991.667  # boost acceleration
+            self.sim_boost_amount = max(0, self.sim_boost_amount - 33.3 * dt)  # boost consumption
+        elif throttle > 0:
+            # Normal acceleration
+            accel = 1600.0 if speed < 1400 else 160.0
+        else:
+            # Coasting/braking
+            accel = -525.0 if throttle < 0 else 0.0
+        
+        # Update velocity (simplified 2D)
+        forward_dir = np.array([np.sin(steer * 0.1), np.cos(steer * 0.1), 0])
+        self.sim_car_velocity += forward_dir * accel * dt
+        
+        # Clamp speed
+        speed = np.linalg.norm(self.sim_car_velocity)
+        if speed > max_speed:
+            self.sim_car_velocity = self.sim_car_velocity / speed * max_speed
+        
+        # Update position
+        self.sim_car_position += self.sim_car_velocity * dt
+        
+        # Simple ball physics - ball moves toward opponent goal if car is close
+        dist_to_ball = np.linalg.norm(self.sim_ball_position - self.sim_car_position)
+        
+        if dist_to_ball < 200:  # Touch range
+            # Ball was touched
+            self.stats['touches'] += 1
+            self.steps_since_last_touch = 0
+            self.last_touch_time = self.episode_length * dt
+            
+            # Ball moves in car velocity direction (simplified)
+            touch_power = min(speed / max_speed, 1.0)
+            self.sim_ball_velocity = self.sim_car_velocity * touch_power * 1.5
+            
+            # Check if aerial touch
+            if self.sim_ball_position[2] > 200:
+                self.stats['aerial_touches'] += 1
+                self.aerial_successes += 1
+        
+        # Update ball position
+        self.sim_ball_position += self.sim_ball_velocity * dt
+        
+        # Ball gravity and ground bounce
+        self.sim_ball_velocity[2] -= 650.0 * dt  # gravity
+        if self.sim_ball_position[2] < 100:
+            self.sim_ball_position[2] = 100
+            self.sim_ball_velocity[2] = abs(self.sim_ball_velocity[2]) * 0.6  # bounce
+        
+        # Check for goal (simplified)
+        goal_y = 5120  # opponent goal Y position
+        if abs(self.sim_ball_position[0]) < 893 and abs(self.sim_ball_position[2]) < 642:
+            if self.sim_ball_position[1] > goal_y:
+                self.stats['goals_scored'] += 1
+            elif self.sim_ball_position[1] < -goal_y:
+                self.stats['goals_conceded'] += 1
+        
+        # Boost pad pickup (simplified - random chance)
+        if self.sim_boost_amount < 50 and np.random.random() < 0.01:
+            self.sim_boost_amount = min(100, self.sim_boost_amount + 12)  # small pad
+            self.stats['boost_collected'] += 1
     
     def _get_observation(self) -> np.ndarray:
         """Get current observation.
@@ -185,24 +306,38 @@ class RocketSimEnv:
             Encoded observation vector
         """
         # In real implementation, would get state from RocketSim
-        # For now, create a dummy raw observation
+        # For simulation mode, use simulated state
+        if self.simulation_mode:
+            car_pos = self.sim_car_position
+            car_vel = self.sim_car_velocity
+            ball_pos = self.sim_ball_position
+            ball_vel = self.sim_ball_velocity
+            boost = self.sim_boost_amount
+        else:
+            # Placeholder for real RocketSim
+            car_pos = np.array([0.0, 0.0, 20.0])
+            car_vel = np.array([500.0, 0.0, 0.0])
+            ball_pos = np.array([0.0, 1000.0, 100.0])
+            ball_vel = np.array([0.0, 500.0, 0.0])
+            boost = self.prev_boost
+        
         raw_obs = RawObservation(
-            car_position=np.array([0.0, 0.0, 20.0]),
-            car_velocity=np.array([500.0, 0.0, 0.0]),
+            car_position=car_pos,
+            car_velocity=car_vel,
             car_angular_velocity=np.array([0.0, 0.0, 0.0]),
             car_rotation_matrix=np.eye(3),
-            car_boost=self.prev_boost,
+            car_boost=boost,
             car_on_ground=True,
             car_has_flip=True,
             car_is_demoed=False,
-            ball_position=np.array([0.0, 1000.0, 100.0]),
-            ball_velocity=np.array([0.0, 500.0, 0.0]),
+            ball_position=ball_pos,
+            ball_velocity=ball_vel,
             ball_angular_velocity=np.array([0.0, 0.0, 0.0]),
-            is_kickoff=False,
-            game_time=self.episode_length * 0.008,  # 8ms per tick
+            is_kickoff=(self.episode_length == 0),
+            game_time=self.episode_length * 0.008 * self.tick_skip,
             score_self=self.stats['goals_scored'],
             score_opponent=self.stats['goals_conceded'],
-            game_phase="NEUTRAL"
+            game_phase="KICKOFF" if self.episode_length == 0 else "NEUTRAL"
         )
         
         return self.encoder.encode(raw_obs)
@@ -219,22 +354,75 @@ class RocketSimEnv:
         """
         reward = 0.0
         
-        # Sparse rewards (implemented in subclass with actual game state)
-        # These would be triggered by game events
+        # Get reward config sections
+        sparse = self.reward_config.get('sparse', {})
+        dense = self.reward_config.get('dense', {})
+        penalties = self.reward_config.get('penalties', {})
         
-        # Dense rewards (shape learning)
-        # Ball velocity toward goal
-        ball_vel_reward = self.reward_config['dense'].get('ball_velocity_toward_goal', 0.0)
-        if ball_vel_reward != 0.0:
-            # Would calculate from actual game state
-            pass
+        # Sparse rewards - Goals
+        if self.episode_length > 0:  # Skip first step
+            if self.stats['goals_scored'] > 0:
+                reward += sparse.get('goal_scored', 10.0)
+            if self.stats['goals_conceded'] > 0:
+                reward += sparse.get('goal_conceded', -10.0)
         
-        # Boost management
-        boost_pickup_reward = self.reward_config['dense'].get('boost_pickup', 0.0)
-        boost_waste_penalty = self.reward_config['dense'].get('boost_waste_penalty', 0.0)
+        # Dense reward - Ball touches
+        if self.steps_since_last_touch == 0:  # Just touched ball
+            reward += dense.get('touch_bonus', 0.1)
+            
+            # Extra reward for aerial touches
+            if self.simulation_mode and self.sim_ball_position[2] > 200:
+                reward += dense.get('aerial_touch_bonus', 0.5)
         
-        # Aerial rewards
-        aerial_bonus = self.reward_config['dense'].get('aerial_touch_bonus', 0.0)
+        # Dense reward - Moving toward ball
+        if self.simulation_mode:
+            dist_to_ball = np.linalg.norm(self.sim_ball_position - self.sim_car_position)
+            
+            # Reward for getting closer to ball
+            prev_dist = dist_to_ball + 10  # Approximate previous distance
+            if dist_to_ball < prev_dist:
+                reward += dense.get('distance_to_ball_decrease', 0.01)
+            
+            # Reward for ball moving toward goal
+            goal_pos = np.array([0.0, 5120.0, 0.0])  # Opponent goal
+            ball_to_goal = goal_pos - self.sim_ball_position
+            ball_to_goal_dist = np.linalg.norm(ball_to_goal[:2])
+            
+            if ball_to_goal_dist > 0:
+                ball_vel_toward_goal = np.dot(
+                    self.sim_ball_velocity[:2],
+                    ball_to_goal[:2] / ball_to_goal_dist
+                )
+                
+                # Reward for increasing ball velocity toward goal
+                if ball_vel_toward_goal > self.prev_ball_velocity_toward_goal:
+                    delta = ball_vel_toward_goal - self.prev_ball_velocity_toward_goal
+                    reward += delta * dense.get('ball_velocity_toward_goal', 0.01)
+                
+                self.prev_ball_velocity_toward_goal = ball_vel_toward_goal
+        
+        # Dense reward - Boost management
+        if self.simulation_mode:
+            boost_used = self.prev_boost - self.sim_boost_amount
+            
+            if boost_used > 1.0:  # Using boost
+                # Penalty for wasting boost (using when not needed)
+                if dist_to_ball > 1000:  # Far from ball
+                    reward += penalties.get('boost_waste', -0.01) * boost_used / 10.0
+            
+            # Reward for collecting boost when low
+            if self.sim_boost_amount > self.prev_boost and self.prev_boost < 50:
+                reward += dense.get('boost_pickup', 0.1)
+            
+            self.prev_boost = self.sim_boost_amount
+        
+        # Penalty - Idle/Not touching ball for too long
+        if self.steps_since_last_touch > 150:  # ~10 seconds without touch
+            reward += penalties.get('idle_penalty', -0.05)
+        
+        # Penalty - Boost starvation
+        if self.simulation_mode and self.sim_boost_amount < 10:
+            reward += penalties.get('boost_starve', -0.1)
         
         return reward
     
@@ -244,8 +432,17 @@ class RocketSimEnv:
         Returns:
             True if episode is terminated
         """
-        # Terminate on goal scored
+        # Terminate on goal scored/conceded (sparse reward event)
         if self.stats['goals_scored'] > 0 or self.stats['goals_conceded'] > 0:
+            return True
+        
+        # Terminate if ball went completely out of bounds (simulation error)
+        if self.simulation_mode:
+            if abs(self.sim_ball_position[0]) > 8000 or abs(self.sim_ball_position[1]) > 10000:
+                return True
+        
+        # Force termination if no ball touches for extended period (agent stuck/idle)
+        if self.steps_since_last_touch > 300:  # ~20 seconds
             return True
         
         return False
