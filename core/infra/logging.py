@@ -4,9 +4,61 @@ This module provides structured logging with TensorBoard integration.
 """
 import json
 import logging
+import numpy as np
 from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime
+
+
+class SafeJSONEncoder(json.JSONEncoder):
+    """JSON encoder that safely handles NumPy types and other non-serializable objects.
+    
+    This encoder prevents 'Object of type int32 is not JSON serializable' errors
+    by converting NumPy types to native Python types.
+    """
+    
+    def default(self, obj):
+        """Convert object to JSON-serializable format.
+        
+        Args:
+            obj: Object to encode
+            
+        Returns:
+            JSON-serializable representation
+        """
+        # Handle NumPy integers
+        if isinstance(obj, np.integer):
+            return int(obj)
+        # Handle NumPy floats
+        if isinstance(obj, np.floating):
+            return float(obj)
+        # Handle NumPy arrays
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        # Handle NumPy bool
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        # Fallback to default encoder
+        return super().default(obj)
+
+
+def safe_log(logger: logging.Logger, level: int, msg: str):
+    """Safely log message, handling Unicode/encoding errors.
+    
+    This function prevents UnicodeEncodeError on Windows terminals by
+    falling back to ASCII encoding when needed.
+    
+    Args:
+        logger: Logger instance
+        level: Logging level (logging.INFO, logging.DEBUG, etc.)
+        msg: Message to log
+    """
+    try:
+        logger.log(level, msg)
+    except UnicodeEncodeError:
+        # Fallback to ASCII-safe version
+        safe_msg = msg.encode('ascii', 'ignore').decode('ascii')
+        logger.log(level, safe_msg)
 
 
 class MetricsLogger:
@@ -81,19 +133,27 @@ class MetricsLogger:
         if not self.metrics:
             return
         
-        with open(self.jsonl_path, "a") as f:
-            for step, metrics in self.metrics.items():
-                log_entry = {
-                    "step": step,
-                    "timestamp": datetime.now().isoformat(),
-                    **metrics
-                }
-                f.write(json.dumps(log_entry) + "\n")
+        try:
+            with open(self.jsonl_path, "a", encoding='utf-8') as f:
+                for step, metrics in self.metrics.items():
+                    log_entry = {
+                        "step": step,
+                        "timestamp": datetime.now().isoformat(),
+                        **metrics
+                    }
+                    # Use SafeJSONEncoder to handle NumPy types
+                    f.write(json.dumps(log_entry, cls=SafeJSONEncoder) + "\n")
+        except Exception as e:
+            # Log error but don't crash training
+            logging.getLogger(__name__).warning(f"Failed to flush metrics: {e}")
         
         self.metrics.clear()
         
         if self.writer:
-            self.writer.flush()
+            try:
+                self.writer.flush()
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"Failed to flush TensorBoard writer: {e}")
     
     def increment_step(self):
         """Increment internal step counter."""

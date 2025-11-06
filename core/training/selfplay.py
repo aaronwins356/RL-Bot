@@ -75,7 +75,7 @@ class SelfPlayManager:
         """Create streamlined 3-stage curriculum: 1v1, 1v2, 2v2 only.
 
         Returns:
-            List of curriculum stages
+            List of curriculum stages (restricted to 3 stages max)
         """
         # Restricted to 1v1, 1v2, 2v2 only
         stages = [
@@ -117,10 +117,14 @@ class SelfPlayManager:
             ),
         ]
 
-        # Override with custom stages if provided
+        # Override with custom stages if provided, but only keep first 3
         custom_stages = self.config.get("custom_stages", [])
         if custom_stages:
             stages = self._parse_custom_stages(custom_stages)
+            # Enforce restriction: only first 3 stages
+            if len(stages) > 3:
+                logger.warning(f"Curriculum restricted to first 3 stages (1v1, 1v2, 2v2). Ignoring {len(stages) - 3} additional stages.")
+                stages = stages[:3]
 
         return stages
 

@@ -7,6 +7,12 @@ import shutil
 from pathlib import Path
 from typing import Dict, Any, Optional
 import json
+import logging
+
+# Import SafeJSONEncoder from logging module
+from core.infra.logging import SafeJSONEncoder
+
+logger = logging.getLogger(__name__)
 
 
 class CheckpointManager:
@@ -224,8 +230,12 @@ class CheckpointManager:
         }
         
         metadata_path = self.save_dir / "metadata.json"
-        with open(metadata_path, "w") as f:
-            json.dump(metadata, f, indent=2)
+        try:
+            with open(metadata_path, "w", encoding='utf-8') as f:
+                # Use SafeJSONEncoder to handle NumPy types
+                json.dump(metadata, f, indent=2, cls=SafeJSONEncoder)
+        except Exception as e:
+            logger.warning(f"Failed to save checkpoint metadata: {e}")
     
     def _load_metadata(self):
         """Load checkpoint metadata."""
@@ -253,3 +263,15 @@ class CheckpointManager:
                 self.best_checkpoint_path = Path(metadata["best_checkpoint"])
         except Exception as e:
             print(f"Failed to load checkpoint metadata: {e}")
+    
+    def get_latest_path(self) -> Optional[Path]:
+        """Get path to latest checkpoint.
+        
+        Returns:
+            Path to latest checkpoint or None if no checkpoints exist
+        """
+        if not self.checkpoints:
+            return None
+        
+        latest = max(self.checkpoints, key=lambda x: x["step"])
+        return latest["path"]
