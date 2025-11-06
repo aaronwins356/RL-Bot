@@ -213,6 +213,20 @@ class TrainingLoop:
         if forced_stage is not None:
             logger.info(f"Forcing curriculum stage: {forced_stage}")
         
+        # Create environment for experience collection
+        from core.env.rocket_sim_env import RocketSimEnv
+        from pathlib import Path
+        env = RocketSimEnv(
+            reward_config_path=Path("configs/rewards.yaml"),
+            simulation_mode=True,
+            debug_mode=self.debug_mode
+        )
+        
+        # Episode state
+        obs = env.reset()
+        episode_reward = 0.0
+        episode_length = 0
+        
         while self.timestep < total_timesteps:
             # Check for early stopping
             if self.early_stop_counter >= self.early_stop_patience:
@@ -243,9 +257,69 @@ class TrainingLoop:
             # Get current stage config
             stage_config = self.selfplay_manager.get_stage_config(self.timestep)
             
-            # Collect experience (would need environment)
-            # For now, this is a placeholder
-            # In real implementation, this would interact with RLBot/RLGym
+            # Collect experience step
+            with torch.no_grad():
+                obs_tensor = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+                cat_probs, ber_probs, value, _, _ = self.model(obs_tensor)
+                
+                # Sample actions
+                cat_actions = []
+                for probs in cat_probs:
+                    cat_dist = torch.distributions.Categorical(probs)
+                    cat_actions.append(cat_dist.sample().item())
+                
+                ber_actions = []
+                for probs in ber_probs:
+                    ber_dist = torch.distributions.Bernoulli(probs)
+                    ber_actions.append(ber_dist.sample().item())
+                
+                # Convert to action array (simplified)
+                action = np.array([
+                    (cat_actions[0] - 2) / 2.0,  # throttle [-1, 1]
+                    (cat_actions[1] - 2) / 2.0,  # steer [-1, 1]
+                    0.0,  # pitch
+                    0.0,  # yaw
+                    0.0,  # roll
+                    ber_actions[0],  # jump
+                    ber_actions[1],  # boost
+                    ber_actions[2] if len(ber_actions) > 2 else 0.0,  # handbrake
+                ])
+            
+            # Step environment
+            next_obs, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
+            
+            # Store in buffer
+            self.buffer.add({
+                'observation': obs,
+                'action': action,
+                'reward': reward,
+                'done': done,
+                'value': value.item()
+            })
+            
+            episode_reward += reward
+            episode_length += 1
+            
+            obs = next_obs
+            
+            # Episode done
+            if done:
+                self.episode += 1
+                if self.debug_mode:
+                    logger.debug(
+                        f"Episode {self.episode} complete: "
+                        f"length={episode_length}, reward={episode_reward:.2f}"
+                    )
+                
+                # Log episode stats
+                self.logger.log_scalar("train/episode_reward", episode_reward, self.timestep)
+                self.logger.log_scalar("train/episode_length", episode_length, self.timestep)
+                
+                # Reset
+                obs = env.reset()
+                episode_reward = 0.0
+                episode_length = 0
             
             # Update model if buffer has enough data
             if len(self.buffer) >= self.config.batch_size:

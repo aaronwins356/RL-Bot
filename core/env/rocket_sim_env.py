@@ -69,10 +69,10 @@ class RocketSimEnv:
             self.reward_config = self._default_reward_config()
         
         # Initialize encoder
-        self.encoder = ObservationEncoder(
-            normalize=True,
-            include_history=False
-        )
+        self.encoder = ObservationEncoder(config={
+            'normalize': True,
+            'include_history': False
+        })
         
         # Environment state
         self.episode_length = 0
