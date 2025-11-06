@@ -92,6 +92,13 @@ class RocketSimEnv:
         self.sim_car_velocity = np.array([0.0, 0.0, 0.0])
         self.sim_boost_amount = 33.0
         
+        # Track previous state for reward calculations
+        self.prev_dist_to_ball = 1000.0  # Initial distance approximation
+        
+        # Goal dimensions (Rocket League standard)
+        self.GOAL_WIDTH = 1786.0  # Half-width (893 * 2)
+        self.GOAL_HEIGHT = 1284.0  # Half-height (642 * 2)
+        
         # Stats for reward calculation
         self.stats = {
             'goals_scored': 0,
@@ -155,6 +162,7 @@ class RocketSimEnv:
         self.steps_since_last_touch = 0
         self.aerial_attempts = 0
         self.aerial_successes = 0
+        self.prev_dist_to_ball = 2000.0  # Reset previous distance
         
         # Reset stats
         for key in self.stats:
@@ -316,7 +324,7 @@ class RocketSimEnv:
         
         # Check for goal (simplified)
         goal_y = 5120  # opponent goal Y position
-        if abs(self.sim_ball_position[0]) < 893 and abs(self.sim_ball_position[2]) < 642:
+        if abs(self.sim_ball_position[0]) < self.GOAL_WIDTH / 2 and abs(self.sim_ball_position[2]) < self.GOAL_HEIGHT / 2:
             if self.sim_ball_position[1] > goal_y:
                 self.stats['goals_scored'] += 1
             elif self.sim_ball_position[1] < -goal_y:
@@ -406,10 +414,12 @@ class RocketSimEnv:
         if self.simulation_mode:
             dist_to_ball = np.linalg.norm(self.sim_ball_position - self.sim_car_position)
             
-            # Reward for getting closer to ball
-            prev_dist = dist_to_ball + 10  # Approximate previous distance
-            if dist_to_ball < prev_dist:
+            # Reward for getting closer to ball (use tracked previous distance)
+            if dist_to_ball < self.prev_dist_to_ball:
                 reward += dense.get('distance_to_ball_decrease', 0.01)
+            
+            # Update previous distance for next step
+            self.prev_dist_to_ball = dist_to_ball
             
             # Reward for ball moving toward goal
             goal_pos = np.array([0.0, 5120.0, 0.0])  # Opponent goal
@@ -431,18 +441,16 @@ class RocketSimEnv:
         
         # Dense reward - Boost management
         if self.simulation_mode:
-            boost_used = self.prev_boost - self.sim_boost_amount
+            boost_used = max(0, self.prev_boost - self.sim_boost_amount)
             
             if boost_used > 1.0:  # Using boost
                 # Penalty for wasting boost (using when not needed)
-                if dist_to_ball > 1000:  # Far from ball
+                if self.prev_dist_to_ball > 1000:  # Far from ball
                     reward += penalties.get('boost_waste', -0.01) * boost_used / 10.0
             
             # Reward for collecting boost when low
             if self.sim_boost_amount > self.prev_boost and self.prev_boost < 50:
                 reward += dense.get('boost_pickup', 0.1)
-            
-            self.prev_boost = self.sim_boost_amount
         
         # Penalty - Idle/Not touching ball for too long
         if self.steps_since_last_touch > 150:  # ~10 seconds without touch
@@ -451,6 +459,10 @@ class RocketSimEnv:
         # Penalty - Boost starvation
         if self.simulation_mode and self.sim_boost_amount < 10:
             reward += penalties.get('boost_starve', -0.1)
+        
+        # Update previous boost for next step
+        if self.simulation_mode:
+            self.prev_boost = self.sim_boost_amount
         
         return reward
     

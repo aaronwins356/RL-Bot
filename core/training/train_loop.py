@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 OBS_SIZE = 173  # Standard observation size (placeholder - should come from encoder)
+DEFAULT_EVAL_GAMES = 25  # Default number of games per opponent during evaluation
 
 
 class TrainingLoop:
@@ -282,16 +283,19 @@ class TrainingLoop:
                 num_actions = len(cat_probs) + len(ber_probs)
                 avg_action_entropy = action_entropy / max(1, num_actions)
                 
-                # Convert to action array (simplified)
+                # Convert to action array
+                # Categorical actions are typically 0-4 (5 options), so we map to [-1, 1]
+                # For example: 0->-1, 1->-0.5, 2->0, 3->0.5, 4->1
+                # Formula: (action - 2) / 2.0 maps [0,4] to [-1,1]
                 action = np.array([
-                    (cat_actions[0] - 2) / 2.0,  # throttle [-1, 1]
-                    (cat_actions[1] - 2) / 2.0,  # steer [-1, 1]
-                    0.0,  # pitch
-                    0.0,  # yaw
-                    0.0,  # roll
-                    ber_actions[0],  # jump
-                    ber_actions[1],  # boost
-                    ber_actions[2] if len(ber_actions) > 2 else 0.0,  # handbrake
+                    (cat_actions[0] - 2) / 2.0,  # throttle: map [0,4] to [-1,1]
+                    (cat_actions[1] - 2) / 2.0,  # steer: map [0,4] to [-1,1]
+                    0.0,  # pitch (not used in 2D simulation)
+                    0.0,  # yaw (not used in 2D simulation)
+                    0.0,  # roll (not used in 2D simulation)
+                    ber_actions[0],  # jump: binary 0/1
+                    ber_actions[1],  # boost: binary 0/1
+                    ber_actions[2] if len(ber_actions) > 2 else 0.0,  # handbrake: binary 0/1
                 ])
             
             # Step environment
@@ -398,20 +402,20 @@ class TrainingLoop:
         })
         
         # PPO stats (if available)
-        if ppo_stats.get("ent_coef"):
-            latest_ent = ppo_stats["ent_coef"][-1] if ppo_stats["ent_coef"] else 0.0
+        if ppo_stats.get("ent_coef") and len(ppo_stats["ent_coef"]) > 0:
+            latest_ent = ppo_stats["ent_coef"][-1]
             self.logger.log_scalar("train/entropy_coef", latest_ent, self.timestep)
         
-        if ppo_stats.get("policy_loss"):
-            latest_policy_loss = ppo_stats["policy_loss"][-1] if ppo_stats["policy_loss"] else 0.0
+        if ppo_stats.get("policy_loss") and len(ppo_stats["policy_loss"]) > 0:
+            latest_policy_loss = ppo_stats["policy_loss"][-1]
             self.logger.log_scalar("train/policy_loss", latest_policy_loss, self.timestep)
         
-        if ppo_stats.get("value_loss"):
-            latest_value_loss = ppo_stats["value_loss"][-1] if ppo_stats["value_loss"] else 0.0
+        if ppo_stats.get("value_loss") and len(ppo_stats["value_loss"]) > 0:
+            latest_value_loss = ppo_stats["value_loss"][-1]
             self.logger.log_scalar("train/value_loss", latest_value_loss, self.timestep)
         
-        if ppo_stats.get("gae_lambda"):
-            latest_gae = ppo_stats["gae_lambda"][-1] if ppo_stats["gae_lambda"] else 0.95
+        if ppo_stats.get("gae_lambda") and len(ppo_stats["gae_lambda"]) > 0:
+            latest_gae = ppo_stats["gae_lambda"][-1]
             self.logger.log_scalar("train/gae_lambda", latest_gae, self.timestep)
         
         self.logger.flush()
@@ -443,8 +447,8 @@ class TrainingLoop:
     
     def _evaluate(self):
         """Evaluate model and check for early stopping."""
-        # Get num_games from config (default to 25 if not specified)
-        num_games = self.config.raw_config.get('logging', {}).get('eval_num_games', 25)
+        # Get num_games from config (default to constant if not specified)
+        num_games = self.config.raw_config.get('logging', {}).get('eval_num_games', DEFAULT_EVAL_GAMES)
         
         # Run full evaluation suite
         results = self.evaluator.evaluate_full(
