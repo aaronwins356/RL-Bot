@@ -16,6 +16,7 @@ ball:
   velocity_toward_ball: 0.05
   distance_to_ball_change: 0.01  # reward for getting closer
   ball_height_control: 0.1  # reward for keeping ball low/high based on context
+  ball_velocity_toward_goal: 0.2  # reward for hitting ball toward opponent goal
   
 # Dense rewards - Goal-oriented
 goal:
@@ -28,6 +29,7 @@ goal:
 positioning:
   optimal_position_reward: 0.05
   rotation_discipline: 0.05
+  good_rotation: 0.1  # reward for proper rotation
   spacing_from_teammates: 0.03
   defensive_positioning: 0.05
   offensive_positioning: 0.03
@@ -40,19 +42,34 @@ boost:
   boost_efficiency: 0.02  # reward for not wasting boost
   boost_starve_opponent: 0.1  # deny opponent boost
   boost_conservation: 0.01
+  boost_pickup: 0.1  # general boost collection reward
+  boost_waste: -0.02  # penalty for wasting boost
 
 # Penalties - Bad behaviors
 penalties:
   double_commit: -0.5  # two teammates going for same ball
   overcommit: -0.3  # leaving goal open
-  boost_waste: -0.02  # using boost inefficiently
+  boost_waste_penalty: -0.02  # using boost inefficiently
   own_goal: -15.0
+  own_goal_risk: -0.5  # penalty for risky plays near own goal
   miss_easy_save: -2.0
   whiff: -0.2  # missing the ball
+  missed_aerial_opportunity: -0.3  # penalty for not going for aerial when available
+  boost_starve: -0.1  # penalty when boost is critically low
   
   # Mechanical failures
   bad_recovery: -0.1
   flip_cancel_fail: -0.05
+  
+# Aerial-specific rewards
+aerial:
+  aerial_touch_bonus: 0.5  # bonus for touching ball in air
+  aerial_goal: 5.0  # bonus for scoring from aerial
+  aerial_save: 4.0  # bonus for saving with aerial
+  aerial_shot: 1.0  # bonus for good aerial shot attempt
+  aerial_positioning: 0.1  # reward for being in position for aerial
+  missed_aerial: -0.3  # penalty for missing aerial attempt
+  aerial_efficiency: 0.2  # reward for efficient aerial execution
   
 # Context-dependent multipliers
 multipliers:
@@ -60,6 +77,7 @@ multipliers:
   overtime: 1.2
   close_game: 1.1  # when score difference < 2
   losing: 1.05  # when behind
+  touch_when_last_man: 1.3  # important touches when defending
 
 # Advanced shaping
 advanced:
@@ -67,11 +85,13 @@ advanced:
   speedflip_success: 0.2
   wavedash_success: 0.1
   fast_aerial_success: 0.15
+  halfflip_success: 0.1
   
   # Reward for game sense
   shadow_defense: 0.1
   fake_challenge: 0.15
   boost_stealing: 0.1
+  demo_opponent: 1.0  # reward for demoing opponent
   
   # Reward for team play (2v2, 3v3)
   passing: 0.3
@@ -88,3 +108,4 @@ normalization:
   use_normalization: true
   clip_rewards: true
   clip_range: [-10.0, 10.0]
+

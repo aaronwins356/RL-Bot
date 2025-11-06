@@ -30,6 +30,11 @@ class RawObservation:
     ball_predicted_position: Optional[np.ndarray] = None  # (3,) - position at intercept
     ball_predicted_time: Optional[float] = None  # Time to intercept
     
+    # Aerial-specific features
+    ball_height_bucket: Optional[int] = None  # 0=ground, 1=low, 2=mid, 3=high (0-4)
+    aerial_opportunity: bool = False  # Flag indicating aerial opportunity
+    car_alignment_to_ball: float = 0.0  # Dot product of car forward to ball direction
+    
     # Teammates (list of dicts with position, velocity, boost, etc.)
     teammates: Optional[List[Dict[str, Any]]] = None
     
@@ -88,13 +93,14 @@ class ObservationEncoder:
         # Ball state: position(3) + velocity(3) + ang_vel(3) = 9
         # Ball relative: rel_pos(3) + rel_vel(3) = 6
         # Ball prediction: pred_pos(3) + pred_time(1) = 4
+        # Aerial features: height_bucket_onehot(5) + aerial_opp(1) + alignment(1) = 7
         # Teammate (per): position(3) + velocity(3) + rel_pos(3) + rel_vel(3) + boost(1) = 13
         # Opponent (per): same as teammate = 13
         # Boost pads (per): position(3) + active(1) + is_large(1) + distance(1) = 6
         # Game state: is_kickoff(1) + time(1) + score_diff(1) = 3
         # Phase encoding: one-hot(4) = 4
         
-        base_size = 22 + 9 + 6 + 4 + 3 + 4  # = 48
+        base_size = 22 + 9 + 6 + 4 + 7 + 3 + 4  # = 55
         
         # Assume max 2 teammates, 3 opponents, 34 boost pads
         max_teammates = 2
@@ -102,7 +108,7 @@ class ObservationEncoder:
         max_boost_pads = 10  # Only encode nearest 10 boost pads
         
         total = base_size + (max_teammates * 13) + (max_opponents * 13) + (max_boost_pads * 6)
-        # = 48 + 26 + 39 + 60 = 173
+        # = 55 + 26 + 39 + 60 = 180
         
         if self.include_history:
             total *= (1 + self.history_length)
@@ -135,6 +141,9 @@ class ObservationEncoder:
         
         # Ball prediction
         features.extend(self._encode_ball_prediction(obs))
+        
+        # Aerial features
+        features.extend(self._encode_aerial_features(obs))
         
         # Teammates
         features.extend(self._encode_teammates(obs))
@@ -243,6 +252,39 @@ class ObservationEncoder:
             features.append(obs.ball_predicted_time / 4.0 if obs.ball_predicted_time is not None else 0.0)
         else:
             features.extend([0.0, 0.0, 0.0, 0.0])
+        
+        return features
+    
+    def _encode_aerial_features(self, obs: RawObservation) -> List[float]:
+        """Encode aerial-specific features.
+        
+        Includes:
+        - Ball height bucket (one-hot encoded)
+        - Aerial opportunity flag
+        - Car alignment to ball
+        
+        Args:
+            obs: Raw observation
+            
+        Returns:
+            List of aerial features
+        """
+        features = []
+        
+        # Ball height bucket (one-hot: ground, low, mid, high, very_high)
+        # Buckets: 0-200, 200-500, 500-1000, 1000-1500, 1500+
+        height_bucket = obs.ball_height_bucket if obs.ball_height_bucket is not None else 0
+        height_onehot = [0.0] * 5
+        if 0 <= height_bucket < 5:
+            height_onehot[height_bucket] = 1.0
+        features.extend(height_onehot)
+        
+        # Aerial opportunity flag
+        features.append(float(obs.aerial_opportunity))
+        
+        # Car alignment to ball (dot product of forward vector to ball direction)
+        # Already in range [-1, 1]
+        features.append(obs.car_alignment_to_ball)
         
         return features
     

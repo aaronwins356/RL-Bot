@@ -60,6 +60,12 @@ class RulePolicy:
         self.SAFE_DISTANCE_THRESHOLD = 1500.0  # Stay this far from ball when rotating
         self.CHALLENGE_DISTANCE = 1000.0
         
+        # Aerial thresholds
+        self.AERIAL_MIN_HEIGHT = 300.0  # Minimum ball height for aerial
+        self.AERIAL_MAX_DISTANCE = 2000.0  # Maximum distance to attempt aerial
+        self.AERIAL_MIN_BOOST = 40.0  # Minimum boost for aerial attempt
+        self.AERIAL_INTERCEPT_TIME = 2.0  # Max time to intercept for aerial
+        
     def get_action(self, context: GameContext) -> Tuple[np.ndarray, Intent, float]:
         """Get action from rule policy.
         
@@ -79,13 +85,23 @@ class RulePolicy:
         if context.is_kickoff:
             return self._kickoff_action(context), Intent.KICKOFF, confidence
         
+        # Check for aerial opportunity
+        if self._should_aerial(context):
+            return self._aerial_action(context), Intent.AERIAL_SHOT, confidence
+        
         # Last man defense - highest priority
         if context.is_last_man and self._ball_threatening():
             return self._defensive_action(context), Intent.SAVE, confidence
         
-        # Low boost - get boost
-        if context.boost_amount < self.CRITICAL_BOOST_THRESHOLD:
+        # Low boost - get boost (but not if we need to challenge)
+        if context.boost_amount < self.CRITICAL_BOOST_THRESHOLD and not context.is_closest_to_ball:
             return self._boost_pickup_action(context), Intent.BOOST_PICKUP, confidence
+        
+        # Medium boost - get boost when safe
+        if context.boost_amount < self.LOW_BOOST_THRESHOLD and not context.is_closest_to_ball:
+            ball_dist = np.linalg.norm(context.ball_position - context.car_position)
+            if ball_dist > self.SAFE_DISTANCE_THRESHOLD:
+                return self._boost_pickup_action(context), Intent.BOOST_PICKUP, confidence
         
         # Ball is close - decide challenge or rotate
         ball_dist = np.linalg.norm(context.ball_position - context.car_position)
@@ -219,16 +235,69 @@ class RulePolicy:
         return controls
     
     def _boost_pickup_action(self, context: GameContext) -> np.ndarray:
-        """Navigate to nearest boost pad."""
-        # For now, just drive forward (would need boost pad locations)
+        """Navigate to nearest boost pad with smart routing.
+        
+        Prioritizes large boost pads when boost < 30 and safe to collect.
+        Avoids boost waste in non-critical situations.
+        
+        Args:
+            context: Current game context
+            
+        Returns:
+            Control array for boost collection
+        """
+        # Standard large boost pad positions (simplified)
+        # In real implementation, would track all boost pads with availability
+        large_boost_pads = [
+            np.array([3072.0, 4096.0, 73.0]),   # Corner boosts
+            np.array([-3072.0, 4096.0, 73.0]),
+            np.array([3072.0, -4096.0, 73.0]),
+            np.array([-3072.0, -4096.0, 73.0]),
+            np.array([0.0, -4240.0, 73.0]),     # Back wall boosts
+            np.array([0.0, 4240.0, 73.0]),
+        ]
+        
+        # Find nearest boost pad
+        nearest_pad = None
+        nearest_dist = float('inf')
+        
+        for pad_pos in large_boost_pads:
+            dist = np.linalg.norm(pad_pos - context.car_position)
+            
+            # Consider safety: don't go for boost if it puts us out of position
+            # Check if boost is on opponent's side when we should defend
+            if context.is_last_man and pad_pos[1] > 0:
+                continue  # Skip offensive boosts when we're last man
+            
+            if dist < nearest_dist:
+                nearest_dist = dist
+                nearest_pad = pad_pos
+        
+        # If no safe boost found, just maintain position
+        if nearest_pad is None:
+            return self._position_action(context)
+        
+        # Navigate to boost pad
+        target_dir = nearest_pad - context.car_position
+        target_dir = target_dir / (np.linalg.norm(target_dir) + 1e-6)
+        
+        forward = context.car_rotation[:3]
+        angle = np.arctan2(
+            np.cross(forward[:2].astype(float), target_dir[:2].astype(float)),
+            np.dot(forward[:2], target_dir[:2])
+        )
+        
+        # Use boost only if pad is far and we have some boost
+        should_boost = nearest_dist > 2000.0 and context.boost_amount > 20.0
+        
         controls = np.array([
             1.0,  # throttle
-            0.0,  # steer
+            np.clip(angle * 3.0, -1.0, 1.0),  # steer
             0.0,  # pitch
             0.0,  # yaw
             0.0,  # roll
             0.0,  # jump
-            0.0,  # boost
+            1.0 if should_boost else 0.0,  # boost (conserve boost while getting boost)
             0.0   # handbrake
         ])
         
@@ -320,3 +389,106 @@ class RulePolicy:
         """Check if ball is threatening our goal."""
         # Simplified - would need actual ball position/velocity
         return True  # Conservative: assume threatening if we're last man
+    
+    def _should_aerial(self, context: GameContext) -> bool:
+        """Determine if an aerial shot should be attempted.
+        
+        Args:
+            context: Current game context
+            
+        Returns:
+            True if aerial should be attempted
+        """
+        # Don't aerial if already airborne or no flip available
+        if not context.on_ground or not context.has_flip:
+            return False
+        
+        # Need sufficient boost
+        if context.boost_amount < self.AERIAL_MIN_BOOST:
+            return False
+        
+        # Ball must be airborne
+        ball_height = context.ball_position[2]
+        if ball_height < self.AERIAL_MIN_HEIGHT:
+            return False
+        
+        # Ball must be reachable
+        ball_dist = np.linalg.norm(context.ball_position - context.car_position)
+        if ball_dist > self.AERIAL_MAX_DISTANCE:
+            return False
+        
+        # Estimate intercept time
+        # Simplified: assume we can reach at 1000 uu/s average
+        intercept_time = ball_dist / 1000.0
+        if intercept_time > self.AERIAL_INTERCEPT_TIME:
+            return False
+        
+        # Check if ball will still be in air at intercept
+        # Simple gravity check: z_future = z - 0.5 * g * t^2
+        gravity = 650.0  # Rocket League gravity
+        ball_future_height = ball_height + context.ball_velocity[2] * intercept_time - 0.5 * gravity * intercept_time**2
+        
+        if ball_future_height < self.AERIAL_MIN_HEIGHT:
+            return False
+        
+        return True
+    
+    def _aerial_action(self, context: GameContext) -> np.ndarray:
+        """Generate aerial shot action.
+        
+        Uses simplified air control heuristics:
+        1. Jump + tilt toward ball
+        2. Boost while aligning
+        3. Dodge into ball when close
+        
+        Args:
+            context: Current game context
+            
+        Returns:
+            Control array for aerial
+        """
+        # Calculate direction to ball
+        ball_dir = context.ball_position - context.car_position
+        ball_dist = np.linalg.norm(ball_dir)
+        ball_dir = ball_dir / (ball_dist + 1e-6)
+        
+        # Get car orientation
+        forward = context.car_rotation[:3]
+        right = context.car_rotation[3:6]
+        up = context.car_rotation[6:9]
+        
+        # Calculate needed pitch and yaw to align with ball
+        # Pitch: angle in vertical plane
+        forward_horizontal = np.array([forward[0], forward[1], 0.0])
+        forward_horizontal = forward_horizontal / (np.linalg.norm(forward_horizontal) + 1e-6)
+        
+        pitch_angle = np.arctan2(ball_dir[2], np.linalg.norm(ball_dir[:2]))
+        current_pitch = np.arctan2(forward[2], np.linalg.norm(forward[:2]))
+        pitch_error = pitch_angle - current_pitch
+        
+        # Yaw: angle in horizontal plane
+        yaw_angle = np.arctan2(ball_dir[1], ball_dir[0])
+        current_yaw = np.arctan2(forward[1], forward[0])
+        yaw_error = yaw_angle - current_yaw
+        
+        # Normalize angles to [-pi, pi]
+        pitch_error = np.arctan2(np.sin(pitch_error), np.cos(pitch_error))
+        yaw_error = np.arctan2(np.sin(yaw_error), np.cos(yaw_error))
+        
+        # Determine if aligned enough to dodge
+        alignment = np.dot(forward, ball_dir)
+        should_dodge = alignment > 0.9 and ball_dist < 300.0
+        
+        # Controls: [throttle, steer, pitch, yaw, roll, jump, boost, handbrake]
+        controls = np.array([
+            1.0,  # throttle (for momentum)
+            0.0,  # steer (not used in air)
+            np.clip(-pitch_error * 2.0, -1.0, 1.0),  # pitch (negative for up)
+            np.clip(yaw_error * 2.0, -1.0, 1.0),  # yaw
+            0.0,  # roll
+            1.0 if should_dodge else 1.0,  # jump (to start aerial or dodge)
+            1.0 if not should_dodge else 0.0,  # boost (boost while aligning, not while dodging)
+            0.0   # handbrake
+        ])
+        
+        return controls
