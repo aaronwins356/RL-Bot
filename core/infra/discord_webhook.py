@@ -83,7 +83,7 @@ class DiscordWebhook:
             return
         
         embed = {
-            "title": "🚀 Training Started",
+            "title": "[START] Training Started",
             "color": 3447003,  # Blue
             "fields": [
                 {
@@ -329,7 +329,7 @@ class DiscordWebhook:
             return
         
         embed = {
-            "title": "❌ Training Error",
+            "title": "[ERROR] Training Error",
             "color": 15158332,  # Red
             "fields": [
                 {

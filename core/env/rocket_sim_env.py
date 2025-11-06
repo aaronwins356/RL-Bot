@@ -8,13 +8,15 @@ import logging
 from typing import Dict, Any, Tuple, Optional, List
 from pathlib import Path
 import yaml
+import gymnasium as gym
+from gymnasium import spaces
 
 from core.features.encoder import ObservationEncoder, RawObservation
 
 logger = logging.getLogger(__name__)
 
 
-class RocketSimEnv:
+class RocketSimEnv(gym.Env):
     """Gym-compatible environment for Rocket League using RocketSim.
     
     This environment supports:
@@ -29,6 +31,10 @@ class RocketSimEnv:
         encoder: Observation encoder
         reward_config: Reward shaping configuration
     """
+    
+    # Define observation and action space sizes as class constants
+    OBS_SIZE = 180  # From ObservationEncoder
+    ACTION_SIZE = 8  # [throttle, steer, pitch, yaw, roll, jump, boost, handbrake]
     
     def __init__(
         self,
@@ -53,6 +59,8 @@ class RocketSimEnv:
             simulation_mode: Use simplified simulation for training (True) or real RocketSim (False)
             debug_mode: Enable detailed step-by-step logging
         """
+        super().__init__()
+        
         self.game_mode = game_mode
         self.tick_skip = tick_skip
         self.spawn_opponents = spawn_opponents
@@ -60,6 +68,23 @@ class RocketSimEnv:
         self.random_spawn = random_spawn
         self.simulation_mode = simulation_mode
         self.debug_mode = debug_mode
+        
+        # Define observation space (continuous values normalized to [-1, 1] or [0, 1])
+        self._observation_space = spaces.Box(
+            low=-np.inf,
+            high=np.inf,
+            shape=(self.OBS_SIZE,),
+            dtype=np.float32
+        )
+        
+        # Define action space (continuous controls)
+        # Actions: [throttle, steer, pitch, yaw, roll, jump, boost, handbrake]
+        self._action_space = spaces.Box(
+            low=np.array([-1.0, -1.0, -1.0, -1.0, -1.0, 0.0, 0.0, 0.0]),
+            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
+            shape=(self.ACTION_SIZE,),
+            dtype=np.float32
+        )
         
         # Load reward configuration
         if reward_config_path and reward_config_path.exists():
@@ -141,15 +166,18 @@ class RocketSimEnv:
             }
         }
     
-    def reset(self, seed: Optional[int] = None) -> np.ndarray:
+    def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
         """Reset environment to initial state.
         
         Args:
             seed: Random seed for reproducibility
+            options: Additional options (unused)
             
         Returns:
-            Initial observation
+            Tuple of (observation, info)
         """
+        super().reset(seed=seed)
+        
         if seed is not None:
             np.random.seed(seed)
         
@@ -190,7 +218,13 @@ class RocketSimEnv:
         # For now, return a dummy observation
         obs = self._get_observation()
         
-        return obs
+        # Info dictionary
+        info = {
+            'episode_length': 0,
+            'total_reward': 0.0,
+        }
+        
+        return obs, info
     
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """Execute one environment step.
@@ -201,6 +235,18 @@ class RocketSimEnv:
         Returns:
             Tuple of (observation, reward, terminated, truncated, info)
         """
+        # Ensure action is properly shaped and clamped
+        action = np.asarray(action, dtype=np.float32).flatten()
+        
+        # Clamp action to valid ranges for stability
+        action = np.clip(action, self._action_space.low, self._action_space.high)
+        
+        # Ensure action has correct length (pad with zeros if needed)
+        if len(action) < self.ACTION_SIZE:
+            action = np.pad(action, (0, self.ACTION_SIZE - len(action)), mode='constant')
+        elif len(action) > self.ACTION_SIZE:
+            action = action[:self.ACTION_SIZE]
+        
         self.episode_length += 1
         self.steps_since_last_touch += 1
         
@@ -544,8 +590,7 @@ class RocketSimEnv:
         Returns:
             Observation space definition
         """
-        # Would return gym.spaces.Box
-        return None
+        return self._observation_space
     
     @property
     def action_space(self):
@@ -554,5 +599,4 @@ class RocketSimEnv:
         Returns:
             Action space definition
         """
-        # Would return gym.spaces.Box or MultiDiscrete
-        return None
+        return self._action_space

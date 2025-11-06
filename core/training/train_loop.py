@@ -17,6 +17,7 @@ from core.training.eval import EloEvaluator
 from core.infra.config import Config
 from core.infra.logging import MetricsLogger
 from core.infra.checkpoints import CheckpointManager
+from core.infra.performance import PerformanceMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ def create_vectorized_env(
         from stable_baselines3.common.vec_env import DummyVecEnv
 
         env = DummyVecEnv([make_env(i) for i in range(num_envs)])
-        logger.info(f"✅ DummyVecEnv with {num_envs} environments created")
+        logger.info(f"[OK] DummyVecEnv with {num_envs} environments created")
         return env
     except Exception as e:
         logger.warning(f"DummyVecEnv creation failed: {e}")
@@ -145,8 +146,8 @@ class TrainingLoop:
         # Mixed precision training support
         self.use_amp = self.device.type == "cuda"
         if self.use_amp:
-            self.scaler = torch.cuda.amp.GradScaler()
-            logger.info("✅ Mixed-precision training (AMP) enabled")
+            self.scaler = torch.amp.GradScaler('cuda')
+            logger.info("[OK] Mixed-precision training (AMP) enabled")
         else:
             self.scaler = None
 
@@ -166,14 +167,18 @@ class TrainingLoop:
 
         # Managers
         self.logger = MetricsLogger(self.log_dir, use_tensorboard=config.tensorboard)
+        
+        # Checkpoint directory - save to logs/latest_run/checkpoints/ for Aaron
+        checkpoint_dir = self.log_dir / "checkpoints"
         self.checkpoint_manager = CheckpointManager(
-            Path(config.save_dir),
+            checkpoint_dir,
             keep_best_n=config.raw_config.get("checkpoints", {}).get("keep_best_n", 5),
         )
         self.selfplay_manager = SelfPlayManager(
             config.raw_config.get("training", {}).get("selfplay", {})
         )
         self.evaluator = EloEvaluator(log_dir=self.log_dir)
+        self.performance_monitor = PerformanceMonitor(self.device)
 
         # Curriculum manager (if enabled)
         curriculum_config = config.raw_config.get("training", {}).get("curriculum", {})
@@ -302,11 +307,11 @@ class TrainingLoop:
             logger.info("Curriculum Stages:")
             for i, stage in enumerate(self.selfplay_manager.stages):
                 logger.info(f"  Stage {i}: {stage.name}")
-            logger.info("✅ Curriculum restriction verified")
+            logger.info("[OK] Curriculum restriction verified")
 
         # Verify environment setup with num_envs
         if self.num_envs > 1:
-            logger.info(f"✅ Multi-env setup verified: {self.num_envs} environments")
+            logger.info(f"[OK] Multi-env setup verified: {self.num_envs} environments")
         else:
             logger.info(f"Single environment mode (num_envs={self.num_envs})")
 
@@ -315,24 +320,27 @@ class TrainingLoop:
             dummy_obs = torch.randn(1, OBS_SIZE, device=self.device)
             with torch.no_grad():
                 if self.use_amp:
-                    with torch.cuda.amp.autocast():
+                    with torch.amp.autocast('cuda'):
                         cat_probs, ber_probs, value, _, _ = self.model(dummy_obs)
                 else:
                     cat_probs, ber_probs, value, _, _ = self.model(dummy_obs)
             logger.info(
-                f"✅ Model forward pass verified: cat_probs={cat_probs.shape}, value={value.shape}"
+                f"[OK] Model forward pass verified: cat_probs={cat_probs.shape}, value={value.shape}"
             )
         except Exception as e:
-            logger.error(f"❌ Model forward pass failed: {e}")
+            logger.error(f"[ERROR] Model forward pass failed: {e}")
             raise
 
         # Print configuration summary
         logger.info("=" * 60)
         logger.info("CONFIGURATION SUMMARY")
         logger.info("=" * 60)
+        logger.info(f"Username: Aaron")
         logger.info(f"Device: {self.device}")
         logger.info(f"Mixed Precision: {'Enabled' if self.use_amp else 'Disabled'}")
         logger.info(f"Number of Environments: {self.num_envs}")
+        logger.info(f"Vectorized: {self.num_envs > 1}")
+        logger.info(f"Optimized: True")
         logger.info(
             f"Model Parameters: {sum(p.numel() for p in self.model.parameters()):,}"
         )
@@ -340,8 +348,9 @@ class TrainingLoop:
         logger.info(
             f"Learning Rate: {self.config.raw_config.get('training', {}).get('learning_rate', 8.0e-4)}"
         )
+        logger.info(f"Checkpoint Interval: 250000 timesteps")
         logger.info("=" * 60)
-        logger.info("✅ Training ready (no multiprocessing conflicts)")
+        logger.info("[OK] Training ready (no multiprocessing conflicts)")
         logger.info("=" * 60)
 
         # Run dry test
@@ -374,7 +383,7 @@ class TrainingLoop:
                 # Forward pass
                 with torch.no_grad():
                     if self.use_amp:
-                        with torch.cuda.amp.autocast():
+                        with torch.amp.autocast('cuda'):
                             cat_probs, ber_probs, value, _, _ = self.model(obs_tensor)
                     else:
                         cat_probs, ber_probs, value, _, _ = self.model(obs_tensor)
@@ -398,11 +407,11 @@ class TrainingLoop:
                     break
 
             logger.info(
-                f"✅ rollout verified (no scalar mismatch) - test reward: {total_reward:.2f}"
+                f"[OK] rollout verified (no scalar mismatch) - test reward: {total_reward:.2f}"
             )
 
         except Exception as e:
-            logger.error(f"❌ Dry test failed: {e}")
+            logger.error(f"[ERROR] Dry test failed: {e}")
             if self.debug_mode:
                 raise
 
@@ -445,7 +454,7 @@ class TrainingLoop:
                 debug_mode=self.debug_mode,
             )
             is_vec_env = True
-            logger.info("✅ threaded envs ready")
+            logger.info("[OK] threaded envs ready")
         else:
             from core.env.rocket_sim_env import RocketSimEnv
 
@@ -457,13 +466,22 @@ class TrainingLoop:
             is_vec_env = False
 
         # Episode state - handle both vectorized and single env
-        obs = env.reset()
+        reset_result = env.reset()
         if is_vec_env:
+            # VecEnv may return just obs or (obs, info) depending on version
+            if isinstance(reset_result, tuple):
+                obs = reset_result[0]
+            else:
+                obs = reset_result
             # VecEnv returns (num_envs, obs_dim)
             episode_rewards = np.zeros(self.num_envs)
             episode_lengths = np.zeros(self.num_envs, dtype=int)
         else:
-            # Single env
+            # Single env returns (obs, info)
+            if isinstance(reset_result, tuple):
+                obs, _ = reset_result
+            else:
+                obs = reset_result
             obs = ensure_array(obs, "observation")
             episode_reward = 0.0
             episode_length = 0
@@ -511,7 +529,7 @@ class TrainingLoop:
 
                 # Forward pass with AMP if available
                 if self.use_amp:
-                    with torch.cuda.amp.autocast():
+                    with torch.amp.autocast('cuda'):
                         cat_probs, ber_probs, value, _, _ = self.model(obs_tensor)
                 else:
                     cat_probs, ber_probs, value, _, _ = self.model(obs_tensor)
@@ -583,7 +601,17 @@ class TrainingLoop:
             # Step environment
             if is_vec_env:
                 # VecEnv expects list of actions
-                next_obs, rewards, dones, infos = env.step(all_actions)
+                step_result = env.step(all_actions)
+                # Handle both old (obs, rewards, dones, infos) and new (obs, rewards, terminateds, truncateds, infos) formats
+                if len(step_result) == 4:
+                    # Old format: (obs, rewards, dones, infos)
+                    next_obs, rewards, dones, infos = step_result
+                elif len(step_result) == 5:
+                    # New format: (obs, rewards, terminateds, truncateds, infos)
+                    next_obs, rewards, terminateds, truncateds, infos = step_result
+                    dones = np.logical_or(terminateds, truncateds)
+                else:
+                    raise ValueError(f"Unexpected step return format with {len(step_result)} elements")
                 # Ensure arrays
                 rewards = ensure_array(rewards, "rewards")
                 dones = ensure_array(dones, "dones")
@@ -684,7 +712,12 @@ class TrainingLoop:
             if self.timestep % self.config.log_interval == 0:
                 self._log_progress()
 
-            # Save checkpoint
+            # Save checkpoint every 250k timesteps (Aaron's preference)
+            if self.timestep % 250000 == 0 and self.timestep > 0:
+                self._save_checkpoint()
+                logger.info(f"[OK] Checkpoint saved at {self.timestep} timesteps")
+            
+            # Also save at regular intervals from config
             if self.timestep % self.config.save_interval == 0:
                 self._save_checkpoint()
 
@@ -698,7 +731,7 @@ class TrainingLoop:
             self.timestep += 1
 
         logger.info("Training complete!")
-        logger.info("✅ rollout verified (no scalar mismatch)")
+        logger.info("[OK] rollout verified (no scalar mismatch)")
         self._save_checkpoint(is_best=True)  # Final checkpoint is also best
 
     def _update(self):
@@ -779,7 +812,7 @@ class TrainingLoop:
         # Compute values for all observations
         with torch.no_grad():
             if self.use_amp:
-                with torch.cuda.amp.autocast():
+                with torch.amp.autocast('cuda'):
                     values = self.model.get_value(obs).cpu().numpy()
             else:
                 values = self.model.get_value(obs).cpu().numpy()
@@ -855,8 +888,19 @@ class TrainingLoop:
 
     def _log_progress(self):
         """Log training progress."""
+        import time
+        
         buffer_stats = self.buffer.get_stats()
         ppo_stats = self.ppo.get_stats()
+        
+        # Log performance stats
+        self.performance_monitor.log_stats(self.timestep)
+        
+        # Get performance metrics for tensorboard
+        perf_stats = self.performance_monitor.get_stats(self.timestep)
+        for key, value in perf_stats.items():
+            if isinstance(value, (int, float)):
+                self.logger.log_scalar(f"performance/{key}", value, self.timestep)
 
         # Basic stats
         self.logger.log_dict(

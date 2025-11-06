@@ -243,7 +243,7 @@ class PPO:
         for epoch in range(self.n_epochs):
             # Forward pass with optional mixed precision
             if self.use_amp:
-                with torch.cuda.amp.autocast():
+                with torch.amp.autocast('cuda'):
                     cat_probs, ber_probs, values, _, _ = self.model(observations)
             else:
                 cat_probs, ber_probs, values, _, _ = self.model(observations)
