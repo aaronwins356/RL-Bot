@@ -15,6 +15,9 @@ from core.features.encoder import ObservationEncoder, RawObservation
 
 logger = logging.getLogger(__name__)
 
+# Constants
+DEFAULT_OBS_SIZE = 180  # Default observation size (fallback if encoder not available)
+
 
 def safe_reset(env: gym.Env, max_retries: int = 3) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Safely reset environment with automatic retry and error handling.
@@ -49,10 +52,10 @@ def safe_reset(env: gym.Env, max_retries: int = 3) -> Tuple[np.ndarray, Dict[str
             if attempt == max_retries - 1:
                 # Last attempt failed, return zero observation
                 logger.error("All reset attempts failed, returning zero observation")
-                return np.zeros(getattr(env, 'OBS_SIZE', 180), dtype=np.float32), {}
+                return np.zeros(getattr(env, 'OBS_SIZE', DEFAULT_OBS_SIZE), dtype=np.float32), {}
     
     # Should not reach here, but return safe default
-    return np.zeros(getattr(env, 'OBS_SIZE', 180), dtype=np.float32), {}
+    return np.zeros(getattr(env, 'OBS_SIZE', DEFAULT_OBS_SIZE), dtype=np.float32), {}
 
 
 def safe_step(env: gym.Env, action: np.ndarray, max_retries: int = 2) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:

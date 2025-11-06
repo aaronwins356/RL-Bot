@@ -56,9 +56,10 @@ def safe_log(logger: logging.Logger, level: int, msg: str):
     try:
         logger.log(level, msg)
     except UnicodeEncodeError:
-        # Fallback to ASCII-safe version
-        safe_msg = msg.encode('ascii', 'ignore').decode('ascii')
+        # Fallback to ASCII-safe version with visible replacement
+        safe_msg = msg.encode('ascii', 'replace').decode('ascii')
         logger.log(level, safe_msg)
+        logger.debug("Unicode encoding fallback used for log message")
 
 
 class MetricsLogger:

@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 # Constants
 OBS_SIZE = 180  # Standard observation size from ObservationEncoder
 DEFAULT_EVAL_GAMES = 25  # Default number of games per opponent during evaluation
+CURRICULUM_MAX_STAGE_ID = 2  # Maximum curriculum stage (0=1v1, 1=1v2, 2=2v2)
 
 
 def ensure_array(value, name="value"):
@@ -274,7 +275,7 @@ class TrainingLoop:
                     logger.info(f"[OK] Auto-resumed from checkpoint at timestep {self.timestep}")
                     logger.info(f"[OK] Training will continue from timestep {self.timestep}")
             except Exception as e:
-                logger.info(f"No checkpoint found for auto-resume: {e}")
+                logger.warning(f"Auto-resume failed (checkpoint may not exist or be corrupted): {e}")
 
         # Offline pretraining (if enabled)
         if (
@@ -586,7 +587,7 @@ class TrainingLoop:
                     should_transition, new_stage = (
                         self.selfplay_manager.should_transition_stage(self.timestep)
                     )
-                    if should_transition and new_stage.stage_id <= 2:  # Only first 3 stages
+                    if should_transition and new_stage.stage_id <= CURRICULUM_MAX_STAGE_ID:
                         logger.info(f"Transitioned to curriculum stage: {new_stage.name}")
 
                         # Add current checkpoint to opponent pool for self-play
@@ -883,7 +884,7 @@ class TrainingLoop:
                 # Try to save checkpoint and continue
                 try:
                     self._save_checkpoint()
-                except:
+                except Exception:
                     pass
                 continue
 
