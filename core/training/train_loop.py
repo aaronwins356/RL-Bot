@@ -91,6 +91,15 @@ class TrainingLoop:
         # Training state
         self.timestep = 0
         self.episode = 0
+        self.best_elo = -float('inf')
+        self.eval_history = []
+        self.early_stop_counter = 0
+        self.early_stop_patience = config.raw_config.get("training", {}).get(
+            "early_stop_patience", 5
+        )
+        
+        # Forced curriculum stage (from CLI)
+        self.forced_stage = None
         
         # Offline pretraining (if enabled)
         if config.raw_config.get("training", {}).get("offline", {}).get("enabled", False):
@@ -172,13 +181,15 @@ class TrainingLoop:
         
         return model
     
-    def train(self, total_timesteps: Optional[int] = None):
+    def train(self, total_timesteps: Optional[int] = None, forced_stage: Optional[int] = None):
         """Run training loop.
         
         Args:
             total_timesteps: Total timesteps to train (uses config if None)
+            forced_stage: Force specific curriculum stage (for debugging)
         """
         total_timesteps = total_timesteps or self.config.total_timesteps
+        self.forced_stage = forced_stage
         
         logger.info(f"Starting training for {total_timesteps} timesteps")
         logger.info(f"Device: {self.device}")
@@ -187,12 +198,38 @@ class TrainingLoop:
         if self.curriculum_manager:
             logger.info(f"Curriculum learning enabled with {len(self.curriculum_manager.stages)} stages")
         
+        if forced_stage is not None:
+            logger.info(f"Forcing curriculum stage: {forced_stage}")
+        
         while self.timestep < total_timesteps:
+            # Check for early stopping
+            if self.early_stop_counter >= self.early_stop_patience:
+                logger.warning(
+                    f"Early stopping triggered after {self.early_stop_patience} "
+                    f"evaluations without improvement"
+                )
+                break
+            
             # Check curriculum stage transitions
-            if self.curriculum_manager:
-                if self.curriculum_manager.should_transition(self.timestep):
-                    stage = self.curriculum_manager.get_current_stage(self.timestep)
-                    logger.info(f"Transitioned to curriculum stage: {stage.name}")
+            if self.curriculum_manager and forced_stage is None:
+                should_transition, new_stage = self.selfplay_manager.should_transition_stage(
+                    self.timestep
+                )
+                if should_transition:
+                    logger.info(f"Transitioned to curriculum stage: {new_stage.name}")
+                    
+                    # Add current checkpoint to opponent pool for self-play
+                    if new_stage.opponent_type in ["selfplay", "checkpoint"]:
+                        checkpoint_path = self.checkpoint_manager.get_latest_path()
+                        if checkpoint_path:
+                            self.selfplay_manager.add_opponent(
+                                checkpoint_path,
+                                elo=self.evaluator.get_elo(),
+                                timestep=self.timestep
+                            )
+            
+            # Get current stage config
+            stage_config = self.selfplay_manager.get_stage_config(self.timestep)
             
             # Collect experience (would need environment)
             # For now, this is a placeholder
@@ -280,7 +317,7 @@ class TrainingLoop:
         )
     
     def _evaluate(self):
-        """Evaluate model."""
+        """Evaluate model and check for early stopping."""
         # Run full evaluation suite
         results = self.evaluator.evaluate_full(
             self.model,
@@ -288,8 +325,10 @@ class TrainingLoop:
             num_games=5
         )
         
+        current_elo = self.evaluator.get_elo()
+        
         # Log metrics
-        self.logger.log_scalar("eval/elo", self.evaluator.get_elo(), self.timestep)
+        self.logger.log_scalar("eval/elo", current_elo, self.timestep)
         
         for opponent, result in results.items():
             self.logger.log_scalar(f"eval/{opponent}/win_rate", result['win_rate'], self.timestep)
@@ -298,4 +337,25 @@ class TrainingLoop:
         
         self.logger.flush()
         
-        logger.info(f"Evaluation - Elo: {self.evaluator.get_elo():.0f}")
+        logger.info(f"Evaluation - Elo: {current_elo:.0f}")
+        
+        # Check for improvement
+        if current_elo > self.best_elo:
+            logger.info(f"New best Elo: {current_elo:.0f} (previous: {self.best_elo:.0f})")
+            self.best_elo = current_elo
+            self.early_stop_counter = 0
+            
+            # Save best checkpoint
+            self._save_checkpoint(is_best=True)
+        else:
+            self.early_stop_counter += 1
+            logger.info(
+                f"No Elo improvement ({self.early_stop_counter}/{self.early_stop_patience})"
+            )
+        
+        # Track evaluation history
+        self.eval_history.append({
+            'timestep': self.timestep,
+            'elo': current_elo,
+            'results': results
+        })

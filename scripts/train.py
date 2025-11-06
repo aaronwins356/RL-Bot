@@ -80,11 +80,11 @@ def get_git_info() -> dict:
     """Get git commit hash and status.
     
     Returns:
-        Dictionary with git info
+        Dict with commit_hash, branch, and dirty flag
     """
     try:
         commit_hash = subprocess.check_output(
-            ['git', 'rev-parse', 'HEAD'],
+            ['git', 'rev-parse', '--short', 'HEAD'],
             stderr=subprocess.DEVNULL
         ).decode().strip()
         
@@ -93,9 +93,8 @@ def get_git_info() -> dict:
             stderr=subprocess.DEVNULL
         ).decode().strip()
         
-        # Check if there are uncommitted changes
         dirty = subprocess.call(
-            ['git', 'diff-index', '--quiet', 'HEAD', '--'],
+            ['git', 'diff', '--quiet'],
             stderr=subprocess.DEVNULL
         ) != 0
         
@@ -110,6 +109,58 @@ def get_git_info() -> dict:
             'branch': 'unknown',
             'dirty': False
         }
+
+
+def generate_run_name(config_dict: dict, args: argparse.Namespace) -> str:
+    """Generate auto-named run identifier with hash and config summary.
+    
+    Args:
+        config_dict: Configuration dictionary
+        args: Command line arguments
+        
+    Returns:
+        Run name string
+    """
+    import hashlib
+    
+    # Get key config parameters
+    algo = config_dict.get('training', {}).get('algorithm', 'ppo')
+    lr = config_dict.get('training', {}).get('learning_rate', 3e-4)
+    batch_size = config_dict.get('training', {}).get('batch_size', 4096)
+    
+    # Build config summary
+    parts = [
+        datetime.now().strftime('%Y%m%d_%H%M%S'),
+        algo,
+        f"lr{lr:.0e}".replace('e-0', 'e-'),
+        f"bs{batch_size}"
+    ]
+    
+    # Add special flags
+    if args.aerial_curriculum or config_dict.get('training', {}).get('curriculum', {}).get('aerial_focus'):
+        parts.append('aerial')
+    
+    if args.curriculum_stage is not None:
+        parts.append(f'stage{args.curriculum_stage}')
+    
+    if args.offline_pretrain:
+        parts.append('offline')
+    
+    if args.debug:
+        parts.append('debug')
+    
+    # Generate hash from full config
+    config_str = json.dumps(config_dict, sort_keys=True)
+    config_hash = hashlib.md5(config_str.encode()).hexdigest()[:8]
+    
+    # Get git hash if available
+    git_info = get_git_info()
+    if git_info['commit_hash'] != 'unknown':
+        parts.append(f"git{git_info['commit_hash']}")
+    
+    parts.append(config_hash)
+    
+    return '_'.join(parts)
 
 
 def save_run_metadata(log_dir: Path, config_dict: dict, args: argparse.Namespace):
@@ -207,6 +258,13 @@ def parse_args():
     )
     
     parser.add_argument(
+        '--curriculum-stage',
+        type=int,
+        default=None,
+        help='Force specific curriculum stage (0-4 for 5-stage curriculum)'
+    )
+    
+    parser.add_argument(
         '--offline-pretrain',
         action='store_true',
         help='Pretrain with offline dataset before RL training'
@@ -215,7 +273,14 @@ def parse_args():
     parser.add_argument(
         '--debug',
         action='store_true',
-        help='Run in debug mode (1 episode / 1k steps with verbose output)'
+        help='Run in debug mode (1k steps with verbose output, detailed action/reward/state logging)'
+    )
+    
+    parser.add_argument(
+        '--debug-ticks',
+        type=int,
+        default=None,
+        help='Limit evaluation/training to N ticks in debug mode'
     )
     
     return parser.parse_args()
@@ -279,14 +344,23 @@ def main():
         logger.info("Enabling aerial-focused curriculum training")
         overrides.setdefault('training', {}).setdefault('curriculum', {})['aerial_focus'] = True
     
+    if args.curriculum_stage is not None:
+        logger.info(f"Forcing curriculum stage: {args.curriculum_stage}")
+        overrides.setdefault('training', {})['forced_curriculum_stage'] = args.curriculum_stage
+    
     if args.offline_pretrain:
         logger.info("Enabling offline pretraining")
         overrides.setdefault('training', {}).setdefault('offline', {})['enabled'] = True
     
     if args.debug:
-        logger.warning("Running in DEBUG mode - 1k steps only with verbose output")
+        logger.warning("Running in DEBUG mode - 1k steps with detailed logging")
         overrides.setdefault('training', {})['total_timesteps'] = 1000
         overrides.setdefault('logging', {})['log_interval'] = 10
+        overrides.setdefault('training', {})['debug_mode'] = True
+        
+        if args.debug_ticks:
+            logger.info(f"Limiting to {args.debug_ticks} ticks in debug mode")
+            overrides.setdefault('training', {})['debug_max_ticks'] = args.debug_ticks
     
     # Apply overrides
     if overrides:
@@ -294,8 +368,17 @@ def main():
     
     config = config_manager.config
     
-    # Get log directory
-    log_dir = Path(config_manager.get_safe('logging.log_dir', args.logdir or 'logs'))
+    # Generate auto-named log directory if not specified
+    if args.logdir is None:
+        base_log_dir = Path(config_manager.get_safe('logging.log_dir', 'logs'))
+        run_name = generate_run_name(config.to_dict(), args)
+        log_dir = base_log_dir / run_name
+        logger.info(f"Auto-generated run name: {run_name}")
+    else:
+        log_dir = Path(args.logdir)
+    
+    # Update config with final log directory
+    config_manager.config.logging.log_dir = str(log_dir)
     
     # Save run metadata
     save_run_metadata(log_dir, config.to_dict(), args)
