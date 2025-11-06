@@ -61,7 +61,7 @@ policy:
     safe_rotation: true
 
 inference:
-  device: "cpu"  # "cpu" or "cuda"
+  device: "auto"  # "cpu", "cuda", or "auto" (auto-detects GPU availability)
   batch_size: 1
   frame_budget_ms: 8.0  # max time for inference (120Hz = 8.33ms per tick)
 

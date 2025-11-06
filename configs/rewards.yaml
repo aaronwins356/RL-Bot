@@ -37,6 +37,8 @@ positioning:
   field_coverage: 0.04  # reward for covering important field areas
   stale_positioning: -0.15  # penalty for staying in same position too long
   spacing_quality: 0.05  # reward for maintaining optimal team spacing
+  goal_line_defense: 0.1  # reward for defending near goal line when needed
+  shadow_defense_reward: 0.08  # reward for shadow defense positioning
 
 # Dense rewards - Boost management
 boost:

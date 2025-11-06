@@ -4,11 +4,14 @@ This module provides a gym-compatible environment wrapper for RocketSim,
 with support for aerial training, boost management, and reward shaping.
 """
 import numpy as np
+import logging
 from typing import Dict, Any, Tuple, Optional, List
 from pathlib import Path
 import yaml
 
 from core.features.encoder import ObservationEncoder, RawObservation
+
+logger = logging.getLogger(__name__)
 
 
 class RocketSimEnv:
@@ -36,6 +39,7 @@ class RocketSimEnv:
         enable_aerial_training: bool = True,
         random_spawn: bool = True,
         simulation_mode: bool = True,  # True for simulated episodes, False for real RocketSim
+        debug_mode: bool = False,  # Enable detailed logging
     ):
         """Initialize RocketSim environment.
         
@@ -47,6 +51,7 @@ class RocketSimEnv:
             enable_aerial_training: Enable aerial training scenarios
             random_spawn: Randomize spawn positions
             simulation_mode: Use simplified simulation for training (True) or real RocketSim (False)
+            debug_mode: Enable detailed step-by-step logging
         """
         self.game_mode = game_mode
         self.tick_skip = tick_skip
@@ -54,6 +59,7 @@ class RocketSimEnv:
         self.enable_aerial_training = enable_aerial_training
         self.random_spawn = random_spawn
         self.simulation_mode = simulation_mode
+        self.debug_mode = debug_mode
         
         # Load reward configuration
         if reward_config_path and reward_config_path.exists():
@@ -204,9 +210,31 @@ class RocketSimEnv:
         reward = self._calculate_reward(obs, action)
         self.total_reward += reward
         
+        # Debug logging
+        if self.debug_mode and self.episode_length % 50 == 0:
+            logger.debug(
+                f"Step {self.episode_length}: "
+                f"reward={reward:.3f}, "
+                f"total_reward={self.total_reward:.2f}, "
+                f"touches={self.stats['touches']}, "
+                f"steps_since_touch={self.steps_since_last_touch}, "
+                f"boost={self.sim_boost_amount if self.simulation_mode else 0:.1f}"
+            )
+        
         # Check termination conditions
         terminated = self._check_terminated()
         truncated = self.episode_length >= self.max_episode_length
+        
+        # Log episode completion
+        if (terminated or truncated) and self.debug_mode:
+            logger.info(
+                f"Episode ended: length={self.episode_length}, "
+                f"total_reward={self.total_reward:.2f}, "
+                f"goals_scored={self.stats['goals_scored']}, "
+                f"goals_conceded={self.stats['goals_conceded']}, "
+                f"touches={self.stats['touches']}, "
+                f"terminated={terminated}, truncated={truncated}"
+            )
         
         # Additional info
         info = {

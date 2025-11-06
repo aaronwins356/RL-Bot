@@ -409,7 +409,12 @@ def main():
     
     # Validate and fallback device if needed
     import torch
-    if config.inference.device == 'cuda' and not torch.cuda.is_available():
+    device_str = config.inference.device
+    if device_str == "auto":
+        device_str = "cuda" if torch.cuda.is_available() else "cpu"
+        logger.info(f"Auto-detected device: {device_str}")
+        config_manager.config.inference.device = device_str
+    elif device_str == 'cuda' and not torch.cuda.is_available():
         logger.warning("CUDA requested in config but not available, falling back to CPU")
         config_manager.config.inference.device = 'cpu'
     
