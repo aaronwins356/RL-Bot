@@ -52,6 +52,7 @@ class PPO:
         # Enhanced features
         self.use_dynamic_lambda = self.config.get("use_dynamic_lambda", True)
         self.use_entropy_annealing = self.config.get("use_entropy_annealing", True)
+        self.use_clip_range_decay = self.config.get("clip_range_decay", False)
         self.use_reward_scaling = self.config.get("use_reward_scaling", True)
 
         # Dynamic GAE lambda
@@ -62,6 +63,11 @@ class PPO:
         self.initial_ent_coef = self.ent_coef
         self.min_ent_coef = self.config.get("min_ent_coef", 0.001)
         self.ent_anneal_rate = self.config.get("ent_anneal_rate", 0.9999)
+        
+        # Clip range decay (linear decay from initial to min)
+        self.initial_clip_range = self.clip_range
+        self.min_clip_range = self.config.get("clip_range_min", 0.1)
+        self.total_timesteps = self.config.get("total_timesteps", 1000000)
 
         # Reward scaling
         self.reward_scale = 1.0
@@ -201,6 +207,20 @@ class PPO:
         if self.use_entropy_annealing:
             self.ent_coef = max(self.min_ent_coef, self.ent_coef * self.ent_anneal_rate)
             self.training_stats["ent_coef"].append(self.ent_coef)
+    
+    def update_clip_range(self, current_timestep: int):
+        """Update clip range with linear decay.
+        
+        Args:
+            current_timestep: Current training timestep
+        """
+        if self.use_clip_range_decay and self.total_timesteps > 0:
+            # Linear decay from initial_clip_range to min_clip_range
+            progress = min(1.0, current_timestep / self.total_timesteps)
+            self.clip_range = self.initial_clip_range - progress * (
+                self.initial_clip_range - self.min_clip_range
+            )
+            self.clip_range = max(self.min_clip_range, self.clip_range)
 
     def update(
         self,
