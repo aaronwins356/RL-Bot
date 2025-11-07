@@ -13,7 +13,13 @@ from core.env.rocket_sim_env import RocketSimEnv
 def test_environment_reset():
     """Test that environment resets properly."""
     env = RocketSimEnv(simulation_mode=True, debug_mode=False)
-    obs = env.reset()
+    result = env.reset()
+    
+    # Handle new Gym API (obs, info) tuple
+    if isinstance(result, tuple):
+        obs, info = result
+    else:
+        obs = result
     
     assert obs.shape == (180,), f"Expected observation shape (180,), got {obs.shape}"
     assert env.episode_length == 0
@@ -25,7 +31,13 @@ def test_environment_reset():
 def test_episode_completes():
     """Test that episodes complete properly."""
     env = RocketSimEnv(simulation_mode=True, debug_mode=False)
-    obs = env.reset()
+    result = env.reset()
+    
+    # Handle new Gym API
+    if isinstance(result, tuple):
+        obs, _ = result
+    else:
+        obs = result
     
     # Run until episode completes or max steps
     max_steps = 500
@@ -46,7 +58,13 @@ def test_episode_completes():
 def test_rewards_are_meaningful():
     """Test that reward function returns non-zero values."""
     env = RocketSimEnv(simulation_mode=True, debug_mode=False)
-    obs = env.reset()
+    result = env.reset()
+    
+    # Handle new Gym API
+    if isinstance(result, tuple):
+        obs, _ = result
+    else:
+        obs = result
     
     total_reward = 0.0
     for i in range(100):
@@ -64,7 +82,13 @@ def test_rewards_are_meaningful():
 def test_ball_touch_reward():
     """Test that touching ball gives reward."""
     env = RocketSimEnv(simulation_mode=True, debug_mode=False)
-    obs = env.reset()
+    result = env.reset()
+    
+    # Handle new Gym API
+    if isinstance(result, tuple):
+        obs, _ = result
+    else:
+        obs = result
     
     # Start car closer to ball by resetting sim state
     env.sim_car_position = np.array([0.0, -500.0, 20.0])  # Much closer to ball
@@ -98,7 +122,13 @@ def test_ball_touch_reward():
 def test_idle_penalty():
     """Test that idle behavior is penalized."""
     env = RocketSimEnv(simulation_mode=True, debug_mode=False)
-    obs = env.reset()
+    result = env.reset()
+    
+    # Handle new Gym API
+    if isinstance(result, tuple):
+        obs, _ = result
+    else:
+        obs = result
     
     # Do nothing (idle)
     idle_action = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
@@ -121,7 +151,13 @@ def test_episode_termination_conditions():
     # Test timeout
     env = RocketSimEnv(simulation_mode=True, debug_mode=False)
     env.max_episode_length = 50
-    obs = env.reset()
+    result = env.reset()
+    
+    # Handle new Gym API
+    if isinstance(result, tuple):
+        obs, _ = result
+    else:
+        obs = result
     
     terminated = False
     truncated = False

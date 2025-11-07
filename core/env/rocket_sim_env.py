@@ -15,6 +15,97 @@ from core.features.encoder import ObservationEncoder, RawObservation
 
 logger = logging.getLogger(__name__)
 
+# Constants
+DEFAULT_OBS_SIZE = 180  # Default observation size (fallback if encoder not available)
+
+
+def safe_reset(env: gym.Env, max_retries: int = 3) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Safely reset environment with automatic retry and error handling.
+    
+    Args:
+        env: Gym environment to reset
+        max_retries: Maximum number of retry attempts
+        
+    Returns:
+        Tuple of (observation, info)
+    """
+    for attempt in range(max_retries):
+        try:
+            result = env.reset()
+            
+            # Handle both old (obs) and new (obs, info) formats
+            if isinstance(result, tuple) and len(result) == 2:
+                obs, info = result
+            else:
+                obs = result
+                info = {}
+            
+            # Check for NaN observations
+            if isinstance(obs, np.ndarray) and np.any(np.isnan(obs)):
+                logger.warning(f"NaN observation detected on reset attempt {attempt + 1}, retrying...")
+                continue
+                
+            return obs, info
+            
+        except Exception as e:
+            logger.error(f"Reset failed on attempt {attempt + 1}/{max_retries}: {e}")
+            if attempt == max_retries - 1:
+                # Last attempt failed, return zero observation
+                logger.error("All reset attempts failed, returning zero observation")
+                return np.zeros(getattr(env, 'OBS_SIZE', DEFAULT_OBS_SIZE), dtype=np.float32), {}
+    
+    # Should not reach here, but return safe default
+    return np.zeros(getattr(env, 'OBS_SIZE', DEFAULT_OBS_SIZE), dtype=np.float32), {}
+
+
+def safe_step(env: gym.Env, action: np.ndarray, max_retries: int = 2) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
+    """Safely execute environment step with automatic recovery and API adaptation.
+    
+    This function handles both old and new Gym API formats and recovers from errors.
+    
+    Args:
+        env: Gym environment
+        action: Action to execute
+        max_retries: Maximum number of retry attempts
+        
+    Returns:
+        Tuple of (obs, reward, terminated, truncated, info)
+    """
+    for attempt in range(max_retries):
+        try:
+            result = env.step(action)
+            
+            # Handle different return formats
+            if len(result) == 4:
+                # Old format: (obs, reward, done, info)
+                obs, reward, done, info = result
+                return obs, reward, done, False, info
+            elif len(result) == 5:
+                # New format: (obs, reward, terminated, truncated, info)
+                obs, reward, terminated, truncated, info = result
+                
+                # Check for NaN observations
+                if isinstance(obs, np.ndarray) and np.any(np.isnan(obs)):
+                    logger.warning(f"NaN observation detected on step attempt {attempt + 1}, resetting...")
+                    obs, info = safe_reset(env)
+                    return obs, 0.0, True, False, info
+                
+                return obs, reward, terminated, truncated, info
+            else:
+                raise ValueError(f"Unexpected env.step() format with {len(result)} elements")
+                
+        except Exception as e:
+            logger.error(f"Env step failed on attempt {attempt + 1}/{max_retries}: {e}")
+            if attempt == max_retries - 1:
+                # Last attempt failed, reset environment
+                logger.error("All step attempts failed, resetting environment")
+                obs, info = safe_reset(env)
+                return obs, 0.0, True, False, info
+    
+    # Should not reach here, but return safe default
+    obs, info = safe_reset(env)
+    return obs, 0.0, True, False, info
+
 
 class RocketSimEnv(gym.Env):
     """Gym-compatible environment for Rocket League using RocketSim.

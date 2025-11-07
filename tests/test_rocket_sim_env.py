@@ -25,7 +25,14 @@ def test_env_reset():
     """Test environment reset."""
     env = RocketSimEnv()
     
-    obs = env.reset(seed=42)
+    result = env.reset(seed=42)
+    
+    # Handle new Gym API (obs, info) tuple
+    if isinstance(result, tuple):
+        obs, info = result
+        assert isinstance(info, dict)
+    else:
+        obs = result
     
     assert obs is not None
     assert isinstance(obs, np.ndarray)

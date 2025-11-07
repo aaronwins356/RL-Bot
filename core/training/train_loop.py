@@ -6,6 +6,7 @@ This module implements the main training loop with PPO.
 import torch
 import numpy as np
 import logging
+import platform
 from typing import Optional
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from core.training.buffer import ReplayBuffer
 from core.training.selfplay import SelfPlayManager
 from core.training.eval import EloEvaluator
 from core.infra.config import Config
-from core.infra.logging import MetricsLogger
+from core.infra.logging import MetricsLogger, safe_log
 from core.infra.checkpoints import CheckpointManager
 from core.infra.performance import PerformanceMonitor
 
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 # Constants
 OBS_SIZE = 180  # Standard observation size from ObservationEncoder
 DEFAULT_EVAL_GAMES = 25  # Default number of games per opponent during evaluation
+CURRICULUM_MAX_STAGE_ID = 2  # Maximum curriculum stage (0=1v1, 1=1v2, 2=2v2)
 
 
 def ensure_array(value, name="value"):
@@ -49,13 +51,53 @@ def ensure_array(value, name="value"):
         return np.array([value])
 
 
+def initialize_cuda_device(device_str: str = "cuda", max_retries: int = 3) -> torch.device:
+    """Initialize CUDA device with automatic retry on failure.
+    
+    Args:
+        device_str: Requested device string ("cuda", "cpu", or "auto")
+        max_retries: Maximum retry attempts for CUDA initialization
+        
+    Returns:
+        torch.device instance
+    """
+    if device_str == "auto":
+        device_str = "cuda" if torch.cuda.is_available() else "cpu"
+        logger.info(f"Auto-detected device: {device_str}")
+    
+    if device_str == "cuda":
+        if not torch.cuda.is_available():
+            logger.warning("CUDA requested but not available, falling back to CPU")
+            return torch.device("cpu")
+        
+        # Try to initialize CUDA with retries
+        for attempt in range(max_retries):
+            try:
+                # Test CUDA by creating a small tensor
+                test_tensor = torch.zeros(1, device='cuda')
+                del test_tensor
+                torch.cuda.empty_cache()
+                logger.info("[OK] CUDA initialized successfully")
+                return torch.device("cuda")
+            except Exception as e:
+                logger.warning(f"CUDA initialization attempt {attempt + 1}/{max_retries} failed: {e}")
+                if attempt < max_retries - 1:
+                    import time
+                    time.sleep(1)  # Wait before retry
+                else:
+                    logger.error("All CUDA initialization attempts failed, falling back to CPU")
+                    return torch.device("cpu")
+    
+    return torch.device(device_str)
+
+
 def create_vectorized_env(
     num_envs: int,
     reward_config_path: Path,
     simulation_mode: bool = True,
     debug_mode: bool = False,
 ):
-    """Create vectorized environment with automatic fallback.
+    """Create vectorized environment with OS-aware selection and automatic fallback.
 
     Args:
         num_envs: Number of parallel environments
@@ -81,7 +123,21 @@ def create_vectorized_env(
 
         return _init
 
-    # Try DummyVecEnv (threaded, Windows-compatible)
+    # Detect OS for vectorization strategy
+    os_name = platform.system()
+    
+    # Try SubprocVecEnv for Linux (better multiprocessing)
+    if os_name == "Linux" and num_envs > 1:
+        try:
+            from stable_baselines3.common.vec_env import SubprocVecEnv
+            
+            env = SubprocVecEnv([make_env(i) for i in range(num_envs)])
+            logger.info(f"[OK] SubprocVecEnv with {num_envs} environments created (Linux)")
+            return env
+        except Exception as e:
+            logger.warning(f"SubprocVecEnv creation failed: {e}, trying DummyVecEnv")
+    
+    # Try DummyVecEnv (Windows-compatible, threaded)
     try:
         from stable_baselines3.common.vec_env import DummyVecEnv
 
@@ -108,6 +164,7 @@ class TrainingLoop:
         log_dir: Optional[str] = None,
         checkpoint_path: Optional[str] = None,
         seed: Optional[int] = None,
+        auto_resume: bool = True,
     ):
         """Initialize training loop.
 
@@ -116,12 +173,20 @@ class TrainingLoop:
             log_dir: Log directory
             checkpoint_path: Path to checkpoint to resume from
             seed: Random seed for reproducibility
+            auto_resume: Automatically resume from latest checkpoint if available
         """
         self.config = config
-        self.log_dir = Path(log_dir or config.log_dir)
+        
+        # Use logs/latest_run/ for Aaron's preference
+        if log_dir:
+            self.log_dir = Path(log_dir)
+        else:
+            self.log_dir = Path(config.log_dir) / "latest_run"
+        
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.checkpoint_path = checkpoint_path
         self.seed = seed
+        self.auto_resume = auto_resume
 
         # Debug mode flag
         self.debug_mode = config.raw_config.get("training", {}).get("debug_mode", False)
@@ -133,15 +198,9 @@ class TrainingLoop:
             torch.manual_seed(seed)
             np.random.seed(seed)
 
-        # Device - check CUDA availability and handle "auto"
+        # Device - check CUDA availability and handle "auto" with retry logic
         device_str = config.device
-        if device_str == "auto":
-            device_str = "cuda" if torch.cuda.is_available() else "cpu"
-            logger.info(f"Auto-detected device: {device_str}")
-        elif device_str == "cuda" and not torch.cuda.is_available():
-            logger.warning("CUDA requested but not available, falling back to CPU")
-            device_str = "cpu"
-        self.device = torch.device(device_str)
+        self.device = initialize_cuda_device(device_str, max_retries=3)
 
         # Mixed precision training support
         self.use_amp = self.device.type == "cuda"
@@ -203,6 +262,20 @@ class TrainingLoop:
 
         # Number of environments
         self.num_envs = config.raw_config.get("training", {}).get("num_envs", 1)
+
+        # Auto-resume from latest checkpoint if enabled
+        if auto_resume and not checkpoint_path:
+            try:
+                checkpoint_meta = self.checkpoint_manager.load_latest_checkpoint(
+                    self.model, self.ppo.optimizer, device=str(self.device)
+                )
+                if checkpoint_meta:
+                    self.timestep = checkpoint_meta.get("step", 0)
+                    self.best_elo = checkpoint_meta.get("metrics", {}).get("eval_score", -float("inf"))
+                    logger.info(f"[OK] Auto-resumed from checkpoint at timestep {self.timestep}")
+                    logger.info(f"[OK] Training will continue from timestep {self.timestep}")
+            except Exception as e:
+                logger.warning(f"Auto-resume failed (checkpoint may not exist or be corrupted): {e}")
 
         # Offline pretraining (if enabled)
         if (
@@ -302,12 +375,13 @@ class TrainingLoop:
         logger.info("VERIFICATION ROUTINE")
         logger.info("=" * 60)
 
-        # Print curriculum stages
+        # Print curriculum stages (restrict to 1v1, 1v2, 2v2 only)
         if self.selfplay_manager:
-            logger.info("Curriculum Stages:")
+            logger.info("Curriculum Stages (restricted to 1v1, 1v2, 2v2):")
             for i, stage in enumerate(self.selfplay_manager.stages):
-                logger.info(f"  Stage {i}: {stage.name}")
-            logger.info("[OK] Curriculum restriction verified")
+                if i <= 2:  # Only show first 3 stages
+                    logger.info(f"  Stage {i}: {stage.name}")
+            logger.info("[OK] Curriculum restriction verified (1v1, 1v2, 2v2 only)")
 
         # Verify environment setup with num_envs
         if self.num_envs > 1:
@@ -331,7 +405,7 @@ class TrainingLoop:
             logger.error(f"[ERROR] Model forward pass failed: {e}")
             raise
 
-        # Print configuration summary
+        # Print configuration summary with Aaron's metadata
         logger.info("=" * 60)
         logger.info("CONFIGURATION SUMMARY")
         logger.info("=" * 60)
@@ -341,6 +415,7 @@ class TrainingLoop:
         logger.info(f"Number of Environments: {self.num_envs}")
         logger.info(f"Vectorized: {self.num_envs > 1}")
         logger.info(f"Optimized: True")
+        logger.info(f"Auto Resume: {self.auto_resume}")
         logger.info(
             f"Model Parameters: {sum(p.numel() for p in self.model.parameters()):,}"
         )
@@ -349,6 +424,7 @@ class TrainingLoop:
             f"Learning Rate: {self.config.raw_config.get('training', {}).get('learning_rate', 8.0e-4)}"
         )
         logger.info(f"Checkpoint Interval: 250000 timesteps")
+        logger.info(f"Log Directory: {self.log_dir}")
         logger.info("=" * 60)
         logger.info("[OK] Training ready (no multiprocessing conflicts)")
         logger.info("=" * 60)
@@ -418,7 +494,7 @@ class TrainingLoop:
     def train(
         self, total_timesteps: Optional[int] = None, forced_stage: Optional[int] = None
     ):
-        """Run training loop.
+        """Run training loop with comprehensive error handling.
 
         Args:
             total_timesteps: Total timesteps to train (uses config if None)
@@ -446,293 +522,378 @@ class TrainingLoop:
             logger.info(f"Forcing curriculum stage: {forced_stage}")
 
         # Create environment(s) for experience collection
-        if self.num_envs > 1:
-            env = create_vectorized_env(
-                self.num_envs,
-                Path("configs/rewards.yaml"),
-                simulation_mode=True,
-                debug_mode=self.debug_mode,
-            )
-            is_vec_env = True
-            logger.info("[OK] threaded envs ready")
-        else:
-            from core.env.rocket_sim_env import RocketSimEnv
+        env = None
+        try:
+            if self.num_envs > 1:
+                env = create_vectorized_env(
+                    self.num_envs,
+                    Path("configs/rewards.yaml"),
+                    simulation_mode=True,
+                    debug_mode=self.debug_mode,
+                )
+                is_vec_env = True
+                logger.info("[OK] Vectorized envs ready")
+            else:
+                from core.env.rocket_sim_env import RocketSimEnv
 
-            env = RocketSimEnv(
-                reward_config_path=Path("configs/rewards.yaml"),
-                simulation_mode=True,
-                debug_mode=self.debug_mode,
-            )
-            is_vec_env = False
+                env = RocketSimEnv(
+                    reward_config_path=Path("configs/rewards.yaml"),
+                    simulation_mode=True,
+                    debug_mode=self.debug_mode,
+                )
+                is_vec_env = False
+        except Exception as e:
+            logger.error(f"Failed to create environment: {e}")
+            raise
 
         # Episode state - handle both vectorized and single env
-        reset_result = env.reset()
-        if is_vec_env:
-            # VecEnv may return just obs or (obs, info) depending on version
-            if isinstance(reset_result, tuple):
-                obs = reset_result[0]
+        try:
+            reset_result = env.reset()
+            if is_vec_env:
+                # VecEnv may return just obs or (obs, info) depending on version
+                if isinstance(reset_result, tuple):
+                    obs = reset_result[0]
+                else:
+                    obs = reset_result
+                # VecEnv returns (num_envs, obs_dim)
+                episode_rewards = np.zeros(self.num_envs)
+                episode_lengths = np.zeros(self.num_envs, dtype=int)
             else:
-                obs = reset_result
-            # VecEnv returns (num_envs, obs_dim)
-            episode_rewards = np.zeros(self.num_envs)
-            episode_lengths = np.zeros(self.num_envs, dtype=int)
-        else:
-            # Single env returns (obs, info)
-            if isinstance(reset_result, tuple):
-                obs, _ = reset_result
-            else:
-                obs = reset_result
-            obs = ensure_array(obs, "observation")
-            episode_reward = 0.0
-            episode_length = 0
+                # Single env returns (obs, info)
+                if isinstance(reset_result, tuple):
+                    obs, _ = reset_result
+                else:
+                    obs = reset_result
+                obs = ensure_array(obs, "observation")
+                episode_reward = 0.0
+                episode_length = 0
+        except Exception as e:
+            logger.error(f"Failed to reset environment: {e}")
+            raise
 
+        # Main training loop with error recovery
         while self.timestep < total_timesteps:
-            # Check for early stopping
-            if self.early_stop_counter >= self.early_stop_patience:
-                logger.warning(
-                    f"Early stopping triggered after {self.early_stop_patience} "
-                    f"evaluations without improvement"
-                )
-                break
+            try:
+                # Check for early stopping
+                if self.early_stop_counter >= self.early_stop_patience:
+                    logger.warning(
+                        f"Early stopping triggered after {self.early_stop_patience} "
+                        f"evaluations without improvement"
+                    )
+                    break
 
-            # Check curriculum stage transitions
-            if self.curriculum_manager and forced_stage is None:
-                should_transition, new_stage = (
-                    self.selfplay_manager.should_transition_stage(self.timestep)
-                )
-                if should_transition:
-                    logger.info(f"Transitioned to curriculum stage: {new_stage.name}")
+                # Check curriculum stage transitions (restrict to first 3 stages)
+                if self.curriculum_manager and forced_stage is None:
+                    should_transition, new_stage = (
+                        self.selfplay_manager.should_transition_stage(self.timestep)
+                    )
+                    if should_transition and new_stage.stage_id <= CURRICULUM_MAX_STAGE_ID:
+                        logger.info(f"Transitioned to curriculum stage: {new_stage.name}")
 
-                    # Add current checkpoint to opponent pool for self-play
-                    if new_stage.opponent_type in ["selfplay", "checkpoint"]:
-                        checkpoint_path = self.checkpoint_manager.get_latest_path()
-                        if checkpoint_path:
-                            self.selfplay_manager.add_opponent(
-                                checkpoint_path,
-                                elo=self.evaluator.get_elo(),
-                                timestep=self.timestep,
+                        # Add current checkpoint to opponent pool for self-play
+                        if new_stage.opponent_type in ["selfplay", "checkpoint"]:
+                            checkpoint_path = self.checkpoint_manager.get_latest_path()
+                            if checkpoint_path:
+                                self.selfplay_manager.add_opponent(
+                                    checkpoint_path,
+                                    elo=self.evaluator.get_elo(),
+                                    timestep=self.timestep,
+                                )
+
+                # Collect experience step - handle both vectorized and single env
+                try:
+                    with torch.no_grad():
+                        # Prepare observation batch
+                        if is_vec_env:
+                            # VecEnv: obs is already (num_envs, obs_dim)
+                            obs_tensor = torch.tensor(
+                                obs, dtype=torch.float32, device=self.device
+                            )
+                        else:
+                            # Single env: add batch dimension
+                            obs_tensor = torch.tensor(
+                                obs, dtype=torch.float32, device=self.device
+                            ).unsqueeze(0)
+
+                        # Forward pass with AMP if available
+                        if self.use_amp:
+                            with torch.amp.autocast('cuda'):
+                                cat_probs, ber_probs, value, _, _ = self.model(obs_tensor)
+                        else:
+                            cat_probs, ber_probs, value, _, _ = self.model(obs_tensor)
+
+                        # Sample actions for each environment
+                        batch_size = obs_tensor.shape[0]
+                        all_actions = []
+                        all_cat_actions = []
+                        all_ber_actions = []
+                        all_cat_log_probs = []
+                        all_ber_log_probs = []
+                        all_entropies = []
+
+                        for b in range(batch_size):
+                            # Calculate action entropy for logging
+                            action_entropy = 0.0
+
+                            # Sample categorical actions
+                            cat_actions = []
+                            cat_log_probs = []
+                            cat_probs_batch = cat_probs[b]  # (n_cat, n_cat_options)
+                            for i in range(cat_probs_batch.shape[0]):
+                                probs = cat_probs_batch[i]  # Shape: (n_cat_options,)
+                                cat_dist = torch.distributions.Categorical(probs)
+                                action_sample = cat_dist.sample()
+                                cat_actions.append(action_sample.item())
+                                cat_log_probs.append(cat_dist.log_prob(action_sample).item())
+                                action_entropy += cat_dist.entropy().item()
+
+                            # Sample bernoulli actions
+                            ber_actions = []
+                            ber_log_probs = []
+                            ber_probs_batch = ber_probs[b]  # (n_ber, 2)
+                            for i in range(ber_probs_batch.shape[0]):
+                                probs = ber_probs_batch[i]  # Shape: (2,)
+                                ber_dist = torch.distributions.Bernoulli(probs[1])
+                                action_sample = ber_dist.sample()
+                                ber_actions.append(int(action_sample.item()))
+                                ber_log_probs.append(ber_dist.log_prob(action_sample).item())
+                                action_entropy += ber_dist.entropy().item()
+
+                            # Average entropy
+                            num_actions = cat_probs_batch.shape[0] + ber_probs_batch.shape[0]
+                            avg_action_entropy = action_entropy / max(1, num_actions)
+
+                            # Convert to action array
+                            action = np.array(
+                                [
+                                    (cat_actions[0] - 2) / 2.0,  # throttle: map [0,4] to [-1,1]
+                                    (cat_actions[1] - 2) / 2.0,  # steer: map [0,4] to [-1,1]
+                                    0.0,  # pitch (not used in 2D simulation)
+                                    0.0,  # yaw (not used in 2D simulation)
+                                    0.0,  # roll (not used in 2D simulation)
+                                    ber_actions[0],  # jump: binary 0/1
+                                    ber_actions[1],  # boost: binary 0/1
+                                    (
+                                        ber_actions[2] if len(ber_actions) > 2 else 0.0
+                                    ),  # handbrake: binary 0/1
+                                ]
                             )
 
-            # Collect experience step - handle both vectorized and single env
-            with torch.no_grad():
-                # Prepare observation batch
-                if is_vec_env:
-                    # VecEnv: obs is already (num_envs, obs_dim)
-                    obs_tensor = torch.tensor(
-                        obs, dtype=torch.float32, device=self.device
-                    )
-                else:
-                    # Single env: add batch dimension
-                    obs_tensor = torch.tensor(
-                        obs, dtype=torch.float32, device=self.device
-                    ).unsqueeze(0)
-
-                # Forward pass with AMP if available
-                if self.use_amp:
-                    with torch.amp.autocast('cuda'):
-                        cat_probs, ber_probs, value, _, _ = self.model(obs_tensor)
-                else:
-                    cat_probs, ber_probs, value, _, _ = self.model(obs_tensor)
-
-                # Sample actions for each environment
-                batch_size = obs_tensor.shape[0]
-                all_actions = []
-                all_cat_actions = []
-                all_ber_actions = []
-                all_cat_log_probs = []
-                all_ber_log_probs = []
-                all_entropies = []
-
-                for b in range(batch_size):
-                    # Calculate action entropy for logging
-                    action_entropy = 0.0
-
-                    # Sample categorical actions
-                    cat_actions = []
-                    cat_log_probs = []
-                    cat_probs_batch = cat_probs[b]  # (n_cat, n_cat_options)
-                    for i in range(cat_probs_batch.shape[0]):
-                        probs = cat_probs_batch[i]  # Shape: (n_cat_options,)
-                        cat_dist = torch.distributions.Categorical(probs)
-                        action_sample = cat_dist.sample()
-                        cat_actions.append(action_sample.item())
-                        cat_log_probs.append(cat_dist.log_prob(action_sample).item())
-                        action_entropy += cat_dist.entropy().item()
-
-                    # Sample bernoulli actions
-                    ber_actions = []
-                    ber_log_probs = []
-                    ber_probs_batch = ber_probs[b]  # (n_ber, 2)
-                    for i in range(ber_probs_batch.shape[0]):
-                        probs = ber_probs_batch[i]  # Shape: (2,)
-                        ber_dist = torch.distributions.Bernoulli(probs[1])
-                        action_sample = ber_dist.sample()
-                        ber_actions.append(int(action_sample.item()))
-                        ber_log_probs.append(ber_dist.log_prob(action_sample).item())
-                        action_entropy += ber_dist.entropy().item()
-
-                    # Average entropy
-                    num_actions = cat_probs_batch.shape[0] + ber_probs_batch.shape[0]
-                    avg_action_entropy = action_entropy / max(1, num_actions)
-
-                    # Convert to action array
-                    action = np.array(
-                        [
-                            (cat_actions[0] - 2) / 2.0,  # throttle: map [0,4] to [-1,1]
-                            (cat_actions[1] - 2) / 2.0,  # steer: map [0,4] to [-1,1]
-                            0.0,  # pitch (not used in 2D simulation)
-                            0.0,  # yaw (not used in 2D simulation)
-                            0.0,  # roll (not used in 2D simulation)
-                            ber_actions[0],  # jump: binary 0/1
-                            ber_actions[1],  # boost: binary 0/1
-                            (
-                                ber_actions[2] if len(ber_actions) > 2 else 0.0
-                            ),  # handbrake: binary 0/1
-                        ]
-                    )
-
-                    all_actions.append(action)
-                    all_cat_actions.append(cat_actions)
-                    all_ber_actions.append(ber_actions)
-                    all_cat_log_probs.append(cat_log_probs)
-                    all_ber_log_probs.append(ber_log_probs)
-                    all_entropies.append(avg_action_entropy)
-
-            # Step environment
-            if is_vec_env:
-                # VecEnv expects list of actions
-                step_result = env.step(all_actions)
-                # Handle both old (obs, rewards, dones, infos) and new (obs, rewards, terminateds, truncateds, infos) formats
-                if len(step_result) == 4:
-                    # Old format: (obs, rewards, dones, infos)
-                    next_obs, rewards, dones, infos = step_result
-                elif len(step_result) == 5:
-                    # New format: (obs, rewards, terminateds, truncateds, infos)
-                    next_obs, rewards, terminateds, truncateds, infos = step_result
-                    dones = np.logical_or(terminateds, truncateds)
-                else:
-                    raise ValueError(f"Unexpected step return format with {len(step_result)} elements")
-                # Ensure arrays
-                rewards = ensure_array(rewards, "rewards")
-                dones = ensure_array(dones, "dones")
-            else:
-                # Single env
-                action = all_actions[0]
-                next_obs, reward, terminated, truncated, info = env.step(action)
-                done = terminated or truncated
-                # Wrap scalars
-                next_obs = ensure_array(next_obs, "next_obs")
-                rewards = np.array([reward])
-                dones = np.array([done])
-
-            # Store experiences in buffer
-            for i in range(batch_size):
-                # Extract per-env data
-                if is_vec_env:
-                    obs_i = obs[i]
-                    reward_i = rewards[i] if i < len(rewards) else 0.0
-                    done_i = dones[i] if i < len(dones) else False
-                    value_i = value[i].item()
-                else:
-                    obs_i = obs
-                    reward_i = rewards[0]
-                    done_i = dones[0]
-                    value_i = value[0].item()
-
-                self.buffer.add(
-                    {
-                        "observation": obs_i,
-                        "action": all_actions[i],
-                        "cat_actions": np.array(all_cat_actions[i]),
-                        "ber_actions": np.array(all_ber_actions[i]),
-                        "cat_log_probs": np.array(all_cat_log_probs[i]),
-                        "ber_log_probs": np.array(all_ber_log_probs[i]),
-                        "reward": reward_i,
-                        "done": done_i,
-                        "value": value_i,
-                        "entropy": all_entropies[i],
-                    }
-                )
-
-                # Update episode stats
-                if is_vec_env:
-                    episode_rewards[i] += reward_i
-                    episode_lengths[i] += 1
-                else:
-                    episode_reward += reward_i
-                    episode_length += 1
-
-                # Log episode completion
-                if done_i:
-                    self.episode += 1
-                    if is_vec_env:
-                        ep_reward = episode_rewards[i]
-                        ep_length = episode_lengths[i]
-                    else:
-                        ep_reward = episode_reward
-                        ep_length = episode_length
-
+                            all_actions.append(action)
+                            all_cat_actions.append(cat_actions)
+                            all_ber_actions.append(ber_actions)
+                            all_cat_log_probs.append(cat_log_probs)
+                            all_ber_log_probs.append(ber_log_probs)
+                            all_entropies.append(avg_action_entropy)
+                except Exception as e:
+                    logger.error(f"Action sampling failed: {e}")
                     if self.debug_mode:
-                        logger.debug(
-                            f"Episode {self.episode} (env {i}) complete: "
-                            f"length={ep_length}, reward={ep_reward:.2f}"
+                        raise
+                    continue
+
+                # Step environment with error handling
+                try:
+                    if is_vec_env:
+                        # VecEnv expects list of actions
+                        step_result = env.step(all_actions)
+                        # Handle both old and new formats
+                        if len(step_result) == 4:
+                            # Old format: (obs, rewards, dones, infos)
+                            next_obs, rewards, dones, infos = step_result
+                        elif len(step_result) == 5:
+                            # New format: (obs, rewards, terminateds, truncateds, infos)
+                            next_obs, rewards, terminateds, truncateds, infos = step_result
+                            dones = np.logical_or(terminateds, truncateds)
+                        else:
+                            raise ValueError(f"Unexpected step return format with {len(step_result)} elements")
+                        # Ensure arrays
+                        rewards = ensure_array(rewards, "rewards")
+                        dones = ensure_array(dones, "dones")
+                    else:
+                        # Single env
+                        action = all_actions[0]
+                        next_obs, reward, terminated, truncated, info = env.step(action)
+                        done = terminated or truncated
+                        # Wrap scalars
+                        next_obs = ensure_array(next_obs, "next_obs")
+                        rewards = np.array([reward])
+                        dones = np.array([done])
+                except Exception as e:
+                    logger.error(f"Environment step failed: {e}, resetting environment")
+                    try:
+                        reset_result = env.reset()
+                        if is_vec_env:
+                            if isinstance(reset_result, tuple):
+                                next_obs = reset_result[0]
+                            else:
+                                next_obs = reset_result
+                            rewards = np.zeros(self.num_envs)
+                            dones = np.ones(self.num_envs, dtype=bool)
+                        else:
+                            if isinstance(reset_result, tuple):
+                                next_obs, _ = reset_result
+                            else:
+                                next_obs = reset_result
+                            next_obs = ensure_array(next_obs, "observation")
+                            rewards = np.array([0.0])
+                            dones = np.array([True])
+                    except Exception as reset_error:
+                        logger.error(f"Environment reset also failed: {reset_error}")
+                        if self.debug_mode:
+                            raise
+                        continue
+
+                # Store experiences in buffer
+                try:
+                    for i in range(batch_size):
+                        # Extract per-env data
+                        if is_vec_env:
+                            obs_i = obs[i]
+                            reward_i = rewards[i] if i < len(rewards) else 0.0
+                            done_i = dones[i] if i < len(dones) else False
+                            value_i = value[i].item()
+                        else:
+                            obs_i = obs
+                            reward_i = rewards[0]
+                            done_i = dones[0]
+                            value_i = value[0].item()
+
+                        self.buffer.add(
+                            {
+                                "observation": obs_i,
+                                "action": all_actions[i],
+                                "cat_actions": np.array(all_cat_actions[i]),
+                                "ber_actions": np.array(all_ber_actions[i]),
+                                "cat_log_probs": np.array(all_cat_log_probs[i]),
+                                "ber_log_probs": np.array(all_ber_log_probs[i]),
+                                "reward": reward_i,
+                                "done": done_i,
+                                "value": value_i,
+                                "entropy": all_entropies[i],
+                            }
                         )
 
-                    # Log episode stats
+                        # Update episode stats
+                        if is_vec_env:
+                            episode_rewards[i] += reward_i
+                            episode_lengths[i] += 1
+                        else:
+                            episode_reward += reward_i
+                            episode_length += 1
+
+                        # Log episode completion
+                        if done_i:
+                            self.episode += 1
+                            if is_vec_env:
+                                ep_reward = episode_rewards[i]
+                                ep_length = episode_lengths[i]
+                            else:
+                                ep_reward = episode_reward
+                                ep_length = episode_length
+
+                            if self.debug_mode:
+                                logger.debug(
+                                    f"Episode {self.episode} (env {i}) complete: "
+                                    f"length={ep_length}, reward={ep_reward:.2f}"
+                                )
+
+                            # Log episode stats
+                            self.logger.log_scalar(
+                                "train/episode_reward", ep_reward, self.timestep
+                            )
+                            self.logger.log_scalar(
+                                "train/episode_length", ep_length, self.timestep
+                            )
+
+                            # Reset episode stats
+                            if is_vec_env:
+                                episode_rewards[i] = 0.0
+                                episode_lengths[i] = 0
+                            else:
+                                episode_reward = 0.0
+                                episode_length = 0
+                except Exception as e:
+                    logger.error(f"Buffer storage failed: {e}")
+                    if self.debug_mode:
+                        raise
+
+                # Log action entropy periodically
+                if self.timestep % 100 == 0:
+                    avg_entropy = np.mean(all_entropies)
                     self.logger.log_scalar(
-                        "train/episode_reward", ep_reward, self.timestep
-                    )
-                    self.logger.log_scalar(
-                        "train/episode_length", ep_length, self.timestep
+                        "train/action_entropy", avg_entropy, self.timestep
                     )
 
-                    # Reset episode stats
-                    if is_vec_env:
-                        episode_rewards[i] = 0.0
-                        episode_lengths[i] = 0
-                    else:
-                        episode_reward = 0.0
-                        episode_length = 0
+                # Update observation for next step
+                obs = next_obs
 
-            # Log action entropy periodically
-            if self.timestep % 100 == 0:
-                avg_entropy = np.mean(all_entropies)
-                self.logger.log_scalar(
-                    "train/action_entropy", avg_entropy, self.timestep
+                # Update model if buffer has enough data
+                if len(self.buffer) >= self.config.batch_size:
+                    try:
+                        self._update()
+                    except Exception as e:
+                        logger.error(f"Model update failed: {e}")
+                        if self.debug_mode:
+                            raise
+
+                # Log
+                if self.timestep % self.config.log_interval == 0:
+                    try:
+                        self._log_progress()
+                    except Exception as e:
+                        logger.error(f"Logging failed: {e}")
+
+                # Save checkpoint every 250k timesteps (Aaron's preference)
+                if self.timestep % 250000 == 0 and self.timestep > 0:
+                    try:
+                        self._save_checkpoint()
+                        logger.info(f"[OK] Auto-saved checkpoint at {self.timestep} steps")
+                    except Exception as e:
+                        logger.error(f"Checkpoint save failed: {e}")
+                
+                # Also save at regular intervals from config
+                if self.timestep % self.config.save_interval == 0:
+                    try:
+                        self._save_checkpoint()
+                    except Exception as e:
+                        logger.error(f"Regular checkpoint save failed: {e}")
+
+                # Evaluate
+                eval_interval = self.config.raw_config.get("logging", {}).get(
+                    "eval_interval", 50000
                 )
+                if self.timestep % eval_interval == 0:
+                    try:
+                        self._evaluate()
+                    except Exception as e:
+                        logger.error(f"Evaluation failed: {e}")
 
-            # Update observation for next step
-            obs = next_obs
+                self.timestep += 1
 
-            # Update model if buffer has enough data
-            if len(self.buffer) >= self.config.batch_size:
-                self._update()
-
-            # Log
-            if self.timestep % self.config.log_interval == 0:
-                self._log_progress()
-
-            # Save checkpoint every 250k timesteps (Aaron's preference)
-            if self.timestep % 250000 == 0 and self.timestep > 0:
-                self._save_checkpoint()
-                logger.info(f"[OK] Checkpoint saved at {self.timestep} timesteps")
-            
-            # Also save at regular intervals from config
-            if self.timestep % self.config.save_interval == 0:
-                self._save_checkpoint()
-
-            # Evaluate
-            eval_interval = self.config.raw_config.get("logging", {}).get(
-                "eval_interval", 50000
-            )
-            if self.timestep % eval_interval == 0:
-                self._evaluate()
-
-            self.timestep += 1
+            except KeyboardInterrupt:
+                logger.info("Training interrupted by user, saving checkpoint...")
+                try:
+                    self._save_checkpoint()
+                except Exception as e:
+                    logger.error(f"Failed to save checkpoint on interrupt: {e}")
+                raise
+            except Exception as e:
+                logger.error(f"Unexpected error in training loop: {e}")
+                if self.debug_mode:
+                    raise
+                # Try to save checkpoint and continue
+                try:
+                    self._save_checkpoint()
+                except Exception:
+                    pass
+                continue
 
         logger.info("Training complete!")
         logger.info("[OK] rollout verified (no scalar mismatch)")
-        self._save_checkpoint(is_best=True)  # Final checkpoint is also best
+        try:
+            self._save_checkpoint(is_best=True)  # Final checkpoint is also best
+        except Exception as e:
+            logger.error(f"Failed to save final checkpoint: {e}")
 
     def _update(self):
         """Perform PPO update with shape validation."""

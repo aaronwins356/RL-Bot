@@ -28,7 +28,7 @@ def test_selfplay_manager_initialization():
     manager = SelfPlayManager()
     
     assert manager is not None
-    assert len(manager.stages) == 5  # Default 5-stage curriculum
+    assert len(manager.stages) == 3  # Restricted to 3 stages: 1v1, 1v2, 2v2
     assert manager.current_stage_idx == 0
 
 
@@ -36,14 +36,12 @@ def test_selfplay_manager_stages():
     """Test curriculum stages are correctly defined."""
     manager = SelfPlayManager()
     
-    # Check all 5 stages exist
-    assert len(manager.stages) == 5
+    # Check all 3 stages exist (restricted curriculum)
+    assert len(manager.stages) == 3
     
-    # Verify stage sequence
+    # Verify stage names
     stage_names = [stage.name for stage in manager.stages]
-    assert "Basic 1v1" in stage_names[0]
-    assert "Rule Policy" in stage_names[1]
-    assert "2v2" in stage_names[2]
+    assert stage_names == ["1v1", "1v2", "2v2"]
     
     # Check stage IDs are sequential
     for i, stage in enumerate(manager.stages):
@@ -54,21 +52,21 @@ def test_selfplay_get_current_stage():
     """Test getting current stage based on timestep."""
     manager = SelfPlayManager()
     
-    # Stage 0: 0 - 1M
+    # Stage 0: 0 - 2M (1v1)
     stage = manager.get_current_stage(500_000)
     assert stage.stage_id == 0
     
-    # Stage 1: 1M - 3M
-    stage = manager.get_current_stage(2_000_000)
+    # Stage 1: 2M - 3.5M (1v2)
+    stage = manager.get_current_stage(2_500_000)
     assert stage.stage_id == 1
     
-    # Stage 2: 3M - 5M
+    # Stage 2: 3.5M+ (2v2)
     stage = manager.get_current_stage(4_000_000)
     assert stage.stage_id == 2
     
     # Last stage should handle any timestep beyond max
     stage = manager.get_current_stage(100_000_000)
-    assert stage.stage_id == 4
+    assert stage.stage_id == 2
 
 
 def test_selfplay_stage_transition():
@@ -81,7 +79,7 @@ def test_selfplay_stage_transition():
     
     # Simulate reaching stage boundary
     manager.current_stage_idx = 0
-    should_transition, new_stage = manager.should_transition_stage(1_000_000)
+    should_transition, new_stage = manager.should_transition_stage(2_000_000)
     assert should_transition
     assert new_stage.stage_id == 1
 
@@ -164,7 +162,7 @@ def test_selfplay_stage_config():
 
 
 def test_selfplay_custom_stages():
-    """Test custom curriculum stages from config."""
+    """Test custom curriculum stages from config (restricted to max 3 stages)."""
     custom_config = {
         'custom_stages': [
             {
@@ -188,6 +186,7 @@ def test_selfplay_custom_stages():
     
     manager = SelfPlayManager(custom_config)
     
+    # Should be limited to 2 stages (as provided)
     assert len(manager.stages) == 2
     assert manager.stages[0].name == 'Custom Stage 1'
     assert manager.stages[1].name == 'Custom Stage 2'

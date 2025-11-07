@@ -17,7 +17,13 @@ def test_normalize_observation_wrapper():
     env = RocketSimEnv()
     wrapped_env = NormalizeObservation(env)
     
-    obs = wrapped_env.reset()
+    result = wrapped_env.reset()
+    # Handle new Gym API
+    if isinstance(result, tuple):
+        obs, _ = result
+    else:
+        obs = result
+    
     assert obs is not None
     assert isinstance(obs, np.ndarray)
     
@@ -34,7 +40,12 @@ def test_frame_stack_wrapper():
     env = RocketSimEnv()
     wrapped_env = FrameStack(env, num_stack=4)
     
-    obs = wrapped_env.reset()
+    result = wrapped_env.reset()
+    # Handle new Gym API
+    if isinstance(result, tuple):
+        obs, _ = result
+    else:
+        obs = result
     
     # Stacked obs should be 4x the size
     base_size = env.encoder.feature_size
