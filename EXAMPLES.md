@@ -220,6 +220,116 @@ def example_tensorboard():
     print()
 
 
+# Example 8: Using Behaviors
+def example_behaviors():
+    """Example: Configure and use behavior system."""
+    print("=" * 60)
+    print("Example 8: Using Behaviors")
+    print("=" * 60)
+    print()
+    print("The bot can use hardcoded behaviors for specific situations.")
+    print()
+    print("Configure in config.yaml:")
+    print("""
+behaviors:
+  enabled: true
+  kickoff_enabled: true      # Fast kickoff routine
+  recovery_enabled: true     # Aerial recovery
+  boost_management_enabled: false  # Experimental
+""")
+    print()
+    print("Behaviors automatically override the learned policy when:")
+    print("  - Kickoff is detected → Rush to ball with boost")
+    print("  - Car is tumbling in air → Reorient wheels down")
+    print("  - Boost is low and safe → Navigate to boost pads")
+    print()
+    print("Disable all behaviors to use pure learned policy:")
+    print("  behaviors.enabled: false")
+    print()
+
+
+# Example 9: Team Play (2v2, 3v3)
+def example_team_play():
+    """Example: Train for team play."""
+    print("=" * 60)
+    print("Example 9: Team Play Configuration")
+    print("=" * 60)
+    print()
+    print("Train for 2v2 or 3v3 with team-aware observations.")
+    print()
+    print("In config.yaml:")
+    print("""
+environment:
+  team_size: 2              # 2v2 (or 3 for 3v3)
+  obs_builder: "team_aware" # Include teammate/opponent info
+  include_predictions: true # Ball trajectory predictions
+  max_team_size: 3          # Max players per team
+  
+rewards:
+  positioning_weight: 0.1   # Reward good positioning
+  rotation_weight: 0.05     # Reward proper rotation
+""")
+    print()
+    print("Team-aware observations include:")
+    print("  - Own player state")
+    print("  - Ball state and predictions")
+    print("  - Teammate positions and velocities")
+    print("  - Opponent positions and velocities")
+    print()
+    print("This helps the bot learn:")
+    print("  - Not to double-commit")
+    print("  - When to rotate back")
+    print("  - Proper defensive coverage")
+    print()
+
+
+# Example 10: Ball Prediction
+def example_ball_prediction():
+    """Example: Use ball prediction in custom code."""
+    print("=" * 60)
+    print("Example 10: Ball Prediction")
+    print("=" * 60)
+    print()
+    print("Ball prediction can be used in custom rewards or behaviors.")
+    print()
+    print("Example code:")
+    print("""
+from rl_bot.core.ball_prediction import SimpleBallPredictor
+import numpy as np
+
+# Create predictor
+predictor = SimpleBallPredictor()
+
+# Current ball state
+ball_pos = np.array([0, 0, 500])
+ball_vel = np.array([1000, 500, 200])
+ball_ang = np.array([0, 0, 0])
+
+# Predict 1 second ahead (120 ticks)
+predictions = predictor.predict(
+    ball_pos, ball_vel, ball_ang,
+    num_steps=120
+)
+
+# Check where ball will be in 0.5 seconds
+future_pos = predictions[60].position
+print(f"Ball will be at: {future_pos}")
+
+# Find when ball lands
+landing = predictor.get_landing_prediction(
+    ball_pos, ball_vel, ball_ang
+)
+if landing:
+    print(f"Ball lands at: {landing.position}")
+""")
+    print()
+    print("Use predictions for:")
+    print("  - Planning aerial intercepts")
+    print("  - Defensive positioning")
+    print("  - Shot setup")
+    print()
+
+
 def main():
     """Run all examples."""
     print("\n")
@@ -235,7 +345,10 @@ def main():
         example_evaluation,
         example_custom_rewards,
         example_resume_training,
-        example_tensorboard
+        example_tensorboard,
+        example_behaviors,
+        example_team_play,
+        example_ball_prediction
     ]
     
     for example in examples:

@@ -165,8 +165,26 @@ def create_rlgym_env(
     Returns:
         Configured RL environment
     """
-    # Create observation builder
-    obs_builder = SimpleObsBuilder()
+    env_config = config.get('environment', {})
+    
+    # Create observation builder based on config
+    obs_builder_type = env_config.get('obs_builder', 'simple')
+    include_predictions = env_config.get('include_predictions', True)
+    
+    if obs_builder_type == 'team_aware':
+        from rl_bot.core.advanced_obs import TeamAwareObsBuilder
+        max_team_size = env_config.get('max_team_size', 3)
+        obs_builder = TeamAwareObsBuilder(
+            max_team_size=max_team_size,
+            include_predictions=include_predictions,
+            num_predictions=5
+        )
+    elif obs_builder_type == 'compact':
+        from rl_bot.core.advanced_obs import CompactObsBuilder
+        obs_builder = CompactObsBuilder(include_predictions=include_predictions)
+    else:
+        # Default simple obs builder
+        obs_builder = SimpleObsBuilder()
     
     # Create action parser
     action_parser = DiscreteActionParser()

@@ -32,6 +32,9 @@ environment:
   timeout_seconds: 300          # Episode timeout in seconds
   spawn_opponents: true         # Spawn opponent bots
   self_play: false              # Use self-play (experimental)
+  obs_builder: "simple"         # Observation builder: "simple", "team_aware", "compact"
+  include_predictions: true     # Include ball predictions in observations
+  max_team_size: 3              # Maximum team size for observations (for team_aware)
   
 # Reward function weights
 rewards:
@@ -63,6 +66,10 @@ rewards:
   flick_attempt: 0.3
   bump_attempt: 0.2
   
+  # Positioning and rotation (for team play)
+  positioning_weight: 0.1       # Reward for good defensive/offensive positioning
+  rotation_weight: 0.05         # Reward for proper rotation in team play
+  
 # Normalization settings
 normalization:
   normalize_observations: true   # Normalize observations
@@ -92,3 +99,20 @@ device: "auto"  # auto, cuda, cpu - auto will detect GPU availability
 
 # Random seed for reproducibility
 seed: 42
+
+# Modular behaviors configuration
+behaviors:
+  enabled: true                 # Enable behavior system
+  kickoff_enabled: true         # Enable fast kickoff routine
+  recovery_enabled: true        # Enable aerial recovery
+  boost_management_enabled: false  # Enable boost management heuristics (experimental)
+  
+# Agent configuration
+agent:
+  use_behaviors: true           # Use behavior overrides during inference
+  heuristic_baseline: false     # Use only heuristics (no learned policy) for baseline
+  
+# RLBot compatibility (for deployment)
+rlbot:
+  enabled: false                # Enable RLBot compatibility mode
+  tick_skip: 8                  # Match training tick skip

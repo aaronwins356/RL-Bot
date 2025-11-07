@@ -337,6 +337,98 @@ class BumpAttemptReward(RewardFunction):
         return reward
 
 
+class PositioningReward(RewardFunction):
+    """
+    Reward for good positioning relative to ball and goal.
+    Encourages defensive positioning when needed.
+    """
+    
+    def __init__(self, weight: float = 0.1):
+        super().__init__()
+        self.weight = weight
+    
+    def reset(self, initial_state: GameState):
+        """No state to reset."""
+        pass
+    
+    def get_reward(self, player: PlayerData, state: GameState, previous_action: np.ndarray) -> float:
+        """Calculate positioning reward."""
+        # Determine own goal position
+        if player.team_num == 0:  # Blue team
+            own_goal = np.array([0, -5120, 0])
+            opponent_goal = np.array([0, 5120, 0])
+        else:  # Orange team
+            own_goal = np.array([0, 5120, 0])
+            opponent_goal = np.array([0, -5120, 0])
+        
+        player_pos = player.car_data.position
+        ball_pos = state.ball.position
+        
+        # Calculate distances
+        ball_to_own_goal = np.linalg.norm(ball_pos - own_goal)
+        player_to_ball = np.linalg.norm(player_pos - ball_pos)
+        player_to_own_goal = np.linalg.norm(player_pos - own_goal)
+        
+        # If ball is close to own goal, reward being between ball and goal
+        if ball_to_own_goal < 3000:
+            # Defensive positioning: be between ball and goal
+            ideal_pos = own_goal + (ball_pos - own_goal) * 0.3
+            dist_to_ideal = np.linalg.norm(player_pos - ideal_pos)
+            reward = -dist_to_ideal / 3000  # Normalized
+        else:
+            # Offensive positioning: be closer to ball
+            reward = -player_to_ball / 5000  # Normalized
+        
+        return reward * self.weight
+
+
+class RotationReward(RewardFunction):
+    """
+    Reward for proper rotation in team play.
+    Encourages not double-committing and maintaining spread.
+    """
+    
+    def __init__(self, weight: float = 0.05):
+        super().__init__()
+        self.weight = weight
+    
+    def reset(self, initial_state: GameState):
+        """No state to reset."""
+        pass
+    
+    def get_reward(self, player: PlayerData, state: GameState, previous_action: np.ndarray) -> float:
+        """Calculate rotation reward."""
+        # Only relevant for team play (2v2, 3v3)
+        teammates = [p for p in state.players if p.team_num == player.team_num and p.car_id != player.car_id]
+        
+        if len(teammates) == 0:
+            return 0.0  # No rotation in 1v1
+        
+        player_pos = player.car_data.position
+        ball_pos = state.ball.position
+        
+        # Calculate player distance to ball
+        player_ball_dist = np.linalg.norm(player_pos - ball_pos)
+        
+        # Check if any teammate is closer to ball
+        teammate_closer = False
+        for teammate in teammates:
+            tm_dist = np.linalg.norm(teammate.car_data.position - ball_pos)
+            if tm_dist < player_ball_dist - 500:  # Teammate significantly closer
+                teammate_closer = True
+                break
+        
+        # If teammate is closer, reward being behind (rotational spread)
+        if teammate_closer:
+            # Reward being further from ball (rotating back)
+            reward = player_ball_dist / 5000  # Normalized positive
+        else:
+            # Reward being closer to ball (front man)
+            reward = -player_ball_dist / 5000  # Negative becomes positive when closest
+        
+        return reward * self.weight
+
+
 def create_reward_function(config: Dict[str, Any]) -> RewardFunction:
     """
     Factory function to create combined reward function from config.
@@ -378,6 +470,12 @@ def create_reward_function(config: Dict[str, Any]) -> RewardFunction:
         ('bump', BumpAttemptReward(
             bump_reward=reward_weights.get('bump_attempt', 0.2),
             demo_reward=reward_weights.get('demo', 2.0)
+        )),
+        ('positioning', PositioningReward(
+            weight=reward_weights.get('positioning_weight', 0.1)
+        )),
+        ('rotation', RotationReward(
+            weight=reward_weights.get('rotation_weight', 0.05)
         )),
     ]
     

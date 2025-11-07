@@ -4,6 +4,9 @@ rlgym-tools>=1.8.3
 rlgym-sim>=2.0.1
 gymnasium>=0.29.0
 
+# RLBot compatibility (optional, for deployment)
+# rlgym-compat>=1.0.0  # Uncomment when deploying to RLBot
+
 # Deep learning
 torch>=2.2.0
 numpy>=1.24.0
