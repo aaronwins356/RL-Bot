@@ -1,0 +1,169 @@
+# Optimized configuration for RL-Bot achieving Elo 1550-1700
+# This configuration implements all optimizations from the improvement plan
+
+training:
+  algorithm: "ppo"
+  total_timesteps: 1000000  # Target: 1M steps to reach 1550-1700 Elo
+  batch_size: 12288  # Reduced from 32768 for faster updates (8192-16384 range)
+  n_epochs: 4  # Increased from 3 for better sample efficiency
+  learning_rate: 3.0e-4  # Reduced from 8e-4 for stability
+  clip_range: 0.2
+  gamma: 0.99  # Standard discount factor
+  gae_lambda: 0.96  # Tuned GAE lambda (0.95-0.97 range)
+  vf_coef: 0.5
+  ent_coef: 0.01  # Will be annealed during training
+  max_grad_norm: 0.5
+  num_envs: 16  # Increased from 8 for better throughput
+  rollout_length: 256
+  
+  # Learning rate scheduling
+  lr_scheduler:
+    enabled: true
+    type: "cosine"  # Cosine annealing for smooth decay
+    min_lr: 3.0e-5  # Final LR = 10% of initial
+    warmup_steps: 10000  # 1% of total steps for warmup
+  
+  # Early stopping - patience-based with EMA smoothing
+  early_stop_patience: 8  # Increased patience for better convergence
+  early_stop_threshold: 0.02  # Stop if variance < 2%
+  elo_ema_window: 3  # Smooth Elo over last 3 evaluations
+  
+  # Self-play settings with Elo-based progression
+  selfplay:
+    enabled: true
+    curriculum_stages: ["1v1", "1v2", "2v2"]
+    opponent_update_freq: 50000  # Reduced from 100k for faster progression
+    elo_threshold: 1550  # Only advance if Elo > 1550
+    stage_specific_stats: true  # Track stats per curriculum stage
+    
+  # Curriculum learning
+  curriculum:
+    enabled: true
+    elo_based_progression: true  # Advance only when Elo thresholds met
+    stage_thresholds:
+      - stage: 0  # 1v1 basic
+        elo_requirement: 1450
+      - stage: 1  # 1v2
+        elo_requirement: 1550
+      - stage: 2  # 2v2
+        elo_requirement: 1650
+
+  # Offline training (BC pretraining) - disabled by default
+  offline:
+    enabled: false
+    dataset_path: "data/telemetry_logs"
+    pretrain_epochs: 10
+    pretrain_lr: 1.0e-3
+  
+  # Performance optimizations
+  optimizations:
+    # Environment vectorization
+    use_subproc_vec_env: true  # True multiprocessing on Linux
+    force_dummy_vec_env: false
+    
+    # Mixed precision training (AMP) for GPU speedup
+    use_amp: true
+    amp_dtype: "float16"
+    
+    # PyTorch optimizations
+    use_torch_compile: true  # Enable torch.compile for 2.0+
+    compile_mode: "reduce-overhead"  # Balance speed and compilation time
+    
+    # Memory optimizations
+    use_pinned_memory: true  # Faster CPU-GPU transfers
+    num_workers: 4  # DataLoader workers
+    
+    # Training optimizations
+    action_repeat: 1  # No action repeat
+    batch_inference: true
+    inference_batch_size: 16  # Match num_envs
+    
+    # Gradient accumulation for larger effective batch size
+    gradient_accumulation_steps: 1  # Disabled by default
+    
+  # Normalization
+  normalization:
+    normalize_observations: true  # Critical for stability
+    normalize_rewards: true  # Critical for convergence
+    clip_obs: 10.0  # Clip normalized obs to [-10, 10]
+    clip_reward: 10.0  # Clip normalized rewards
+    reward_gamma: 0.99  # Discount for reward normalization
+
+network:
+  architecture: "mlp"
+  hidden_sizes: [512, 512, 256]  # Reduced from [1024, 512, 256] for faster inference
+  activation: "elu"
+  use_lstm: false
+  lstm_hidden_size: 256
+  
+  # Observation encoder
+  encoder:
+    normalize: true
+    include_history: false
+    history_length: 4
+
+policy:
+  type: "hybrid"  # "rule", "ml", or "hybrid"
+  
+  # Hybrid policy settings
+  hybrid:
+    use_rules_on_kickoff: true
+    use_rules_on_low_confidence: true
+    confidence_threshold: 0.7
+    ood_detection: "entropy"
+    ood_threshold: 2.0
+    fallback_on_saturation: true
+
+  # Rule policy settings
+  rules:
+    aggressive: false
+    boost_conservation: true
+    safe_rotation: true
+
+inference:
+  device: "auto"  # Auto-detect CUDA
+  batch_size: 1
+  frame_budget_ms: 8.0
+
+logging:
+  log_dir: "logs"
+  tensorboard: true
+  log_interval: 1000  # More frequent logging from 2000
+  save_interval: 25000  # More frequent checkpoints from 10000
+  eval_interval: 25000  # More frequent evaluation from 20000
+  eval_num_games: 10  # Reduced from 25 for faster iteration
+  
+  # Additional metrics
+  log_gpu_utilization: true
+  log_fps: true
+  log_advantage_stats: true
+  log_value_error: true
+  log_entropy: true
+
+checkpoints:
+  save_dir: "checkpoints"
+  keep_best_n: 5
+  keep_latest: true
+  save_optimizer_state: true
+
+telemetry:
+  enabled: true
+  buffer_size: 100000
+  save_interval: 50000  # More frequent from 10000
+  save_path: "data/telemetry"
+
+notifications:
+  discord:
+    enabled: false
+    webhook_url: null
+    notify_on_start: true
+    notify_on_checkpoint: true
+    notify_on_evaluation: true
+    notify_on_complete: true
+    notify_on_error: true
+
+export:
+  enabled: false
+  format: "torchscript"
+  output_dir: "exported_models"
+  create_rlbot_package: true
