@@ -15,10 +15,12 @@ from core.models.ppo import PPO
 from core.training.buffer import ReplayBuffer
 from core.training.selfplay import SelfPlayManager
 from core.training.eval import EloEvaluator
+from core.training.lr_scheduler import create_lr_scheduler
 from core.infra.config import Config
 from core.infra.logging import MetricsLogger, safe_log
 from core.infra.checkpoints import CheckpointManager
 from core.infra.performance import PerformanceMonitor
+from core.env.normalization_wrappers import VecNormalize
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +99,7 @@ def create_vectorized_env(
     simulation_mode: bool = True,
     debug_mode: bool = False,
     opt_config: dict = None,
+    norm_config: dict = None,
 ):
     """Create vectorized environment with OS-aware selection and automatic fallback.
 
@@ -106,13 +109,15 @@ def create_vectorized_env(
         simulation_mode: Use simulation mode
         debug_mode: Enable debug logging
         opt_config: Optimization configuration dict
+        norm_config: Normalization configuration dict
 
     Returns:
-        Vectorized environment
+        Vectorized environment (potentially wrapped with normalization)
     """
     from core.env.rocket_sim_env import RocketSimEnv
 
     opt_config = opt_config or {}
+    norm_config = norm_config or {}
 
     def make_env(env_id):
         """Create a single environment."""
@@ -138,32 +143,47 @@ def create_vectorized_env(
         use_subproc = opt_config.get("use_subproc_vec_env", True)
     
     # Try SubprocVecEnv for Linux (better multiprocessing)
+    env = None
     if os_name == "Linux" and num_envs > 1 and use_subproc:
         try:
             from stable_baselines3.common.vec_env import SubprocVecEnv
             
             env = SubprocVecEnv([make_env(i) for i in range(num_envs)])
             logger.info(f"[OK] SubprocVecEnv with {num_envs} environments created (Linux)")
-            return env
         except Exception as e:
             logger.warning(f"SubprocVecEnv creation failed: {e}, trying DummyVecEnv")
     
-    # Try DummyVecEnv (Windows-compatible, threaded)
-    try:
-        from stable_baselines3.common.vec_env import DummyVecEnv
+    # Try DummyVecEnv (Windows-compatible, threaded) if SubprocVecEnv failed
+    if env is None:
+        try:
+            from stable_baselines3.common.vec_env import DummyVecEnv
 
-        env = DummyVecEnv([make_env(i) for i in range(num_envs)])
-        logger.info(f"[OK] DummyVecEnv with {num_envs} environments created")
-        return env
-    except Exception as e:
-        logger.warning(f"DummyVecEnv creation failed: {e}")
-        # Fallback to single environment
-        logger.info("Falling back to single environment")
-        return RocketSimEnv(
-            reward_config_path=reward_config_path,
-            simulation_mode=simulation_mode,
-            debug_mode=debug_mode,
+            env = DummyVecEnv([make_env(i) for i in range(num_envs)])
+            logger.info(f"[OK] DummyVecEnv with {num_envs} environments created")
+        except Exception as e:
+            logger.warning(f"DummyVecEnv creation failed: {e}")
+            # Fallback to single environment
+            logger.info("Falling back to single environment")
+            env = RocketSimEnv(
+                reward_config_path=reward_config_path,
+                simulation_mode=simulation_mode,
+                debug_mode=debug_mode,
+            )
+    
+    # Apply normalization wrapper if enabled
+    if norm_config.get("normalize_observations", False) or norm_config.get("normalize_rewards", False):
+        env = VecNormalize(
+            env,
+            training=True,
+            norm_obs=norm_config.get("normalize_observations", True),
+            norm_reward=norm_config.get("normalize_rewards", True),
+            clip_obs=norm_config.get("clip_obs", 10.0),
+            clip_reward=norm_config.get("clip_reward", 10.0),
+            gamma=norm_config.get("reward_gamma", 0.99),
         )
+        logger.info("[OK] Normalization wrapper applied (obs and/or reward normalization enabled)")
+    
+    return env
 
 
 class TrainingLoop:
@@ -267,6 +287,19 @@ class TrainingLoop:
         self.early_stop_patience = config.raw_config.get("training", {}).get(
             "early_stop_patience", 5
         )
+
+        # Learning rate scheduler
+        lr_scheduler_config = config.raw_config.get("training", {}).get("lr_scheduler", {})
+        if lr_scheduler_config.get("enabled", False):
+            self.lr_scheduler = create_lr_scheduler(
+                scheduler_type=lr_scheduler_config.get("type", "cosine"),
+                initial_lr=config.raw_config.get("training", {}).get("learning_rate", 3e-4),
+                total_steps=config.raw_config.get("training", {}).get("total_timesteps", 1000000),
+                **lr_scheduler_config
+            )
+            logger.info(f"[OK] LR scheduler enabled: {lr_scheduler_config.get('type', 'cosine')}")
+        else:
+            self.lr_scheduler = None
 
         # Forced curriculum stage (from CLI)
         self.forced_stage = None
@@ -564,6 +597,8 @@ class TrainingLoop:
         env = None
         try:
             opt_config = self.config.raw_config.get("training", {}).get("optimizations", {})
+            norm_config = self.config.raw_config.get("training", {}).get("normalization", {})
+            
             if self.num_envs > 1:
                 env = create_vectorized_env(
                     self.num_envs,
@@ -571,6 +606,7 @@ class TrainingLoop:
                     simulation_mode=True,
                     debug_mode=self.debug_mode,
                     opt_config=opt_config,
+                    norm_config=norm_config,
                 )
                 is_vec_env = True
                 logger.info("[OK] Vectorized envs ready")
@@ -582,6 +618,20 @@ class TrainingLoop:
                     simulation_mode=True,
                     debug_mode=self.debug_mode,
                 )
+                
+                # Apply normalization wrapper for single env
+                if norm_config.get("normalize_observations", False) or norm_config.get("normalize_rewards", False):
+                    env = VecNormalize(
+                        env,
+                        training=True,
+                        norm_obs=norm_config.get("normalize_observations", True),
+                        norm_reward=norm_config.get("normalize_rewards", True),
+                        clip_obs=norm_config.get("clip_obs", 10.0),
+                        clip_reward=norm_config.get("clip_reward", 10.0),
+                        gamma=norm_config.get("reward_gamma", 0.99),
+                    )
+                    logger.info("[OK] Normalization wrapper applied to single environment")
+                
                 is_vec_env = False
         except Exception as e:
             logger.error(f"Failed to create environment: {e}")
@@ -1063,6 +1113,13 @@ class TrainingLoop:
                 old_values,
             )
 
+            # Update learning rate if scheduler is enabled
+            if self.lr_scheduler is not None:
+                new_lr = self.lr_scheduler.step(self.timestep)
+                # Update optimizer learning rate
+                for param_group in self.ppo.optimizer.param_groups:
+                    param_group['lr'] = new_lr
+            
             # Log update stats
             if self.debug_mode:
                 logger.debug(
@@ -1071,6 +1128,8 @@ class TrainingLoop:
                     f"entropy_loss={stats['entropy_loss']:.4f} | "
                     f"explained_var={stats['explained_variance']:.4f}"
                 )
+                if self.lr_scheduler is not None:
+                    logger.debug(f"Learning rate: {new_lr:.6f}")
 
             # Validate scalar losses (accept numpy scalars too)
             assert np.isscalar(
