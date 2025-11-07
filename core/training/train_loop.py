@@ -96,6 +96,7 @@ def create_vectorized_env(
     reward_config_path: Path,
     simulation_mode: bool = True,
     debug_mode: bool = False,
+    opt_config: dict = None,
 ):
     """Create vectorized environment with OS-aware selection and automatic fallback.
 
@@ -104,11 +105,14 @@ def create_vectorized_env(
         reward_config_path: Path to reward config
         simulation_mode: Use simulation mode
         debug_mode: Enable debug logging
+        opt_config: Optimization configuration dict
 
     Returns:
         Vectorized environment
     """
     from core.env.rocket_sim_env import RocketSimEnv
+
+    opt_config = opt_config or {}
 
     def make_env(env_id):
         """Create a single environment."""
@@ -126,8 +130,15 @@ def create_vectorized_env(
     # Detect OS for vectorization strategy
     os_name = platform.system()
     
+    # Check for forced DummyVecEnv
+    if opt_config.get("force_dummy_vec_env", False):
+        logger.info("Forced DummyVecEnv mode (optimization config)")
+        use_subproc = False
+    else:
+        use_subproc = opt_config.get("use_subproc_vec_env", True)
+    
     # Try SubprocVecEnv for Linux (better multiprocessing)
-    if os_name == "Linux" and num_envs > 1:
+    if os_name == "Linux" and num_envs > 1 and use_subproc:
         try:
             from stable_baselines3.common.vec_env import SubprocVecEnv
             
@@ -366,6 +377,17 @@ class TrainingLoop:
             activation=self.config.activation,
             use_lstm=self.config.use_lstm,
         )
+        
+        # Apply torch.compile if enabled (PyTorch 2.0+)
+        opt_config = self.config.raw_config.get("training", {}).get("optimizations", {})
+        if opt_config.get("use_torch_compile", False):
+            try:
+                compile_mode = opt_config.get("compile_mode", "default")
+                logger.info(f"Compiling model with torch.compile (mode={compile_mode})...")
+                model = torch.compile(model, mode=compile_mode)
+                logger.info("[OK] Model compiled successfully")
+            except Exception as e:
+                logger.warning(f"torch.compile failed (requires PyTorch 2.0+): {e}")
 
         return model
 
@@ -414,7 +436,17 @@ class TrainingLoop:
         logger.info(f"Mixed Precision: {'Enabled' if self.use_amp else 'Disabled'}")
         logger.info(f"Number of Environments: {self.num_envs}")
         logger.info(f"Vectorized: {self.num_envs > 1}")
-        logger.info(f"Optimized: True")
+        
+        # Print optimization status
+        opt_config = self.config.raw_config.get("training", {}).get("optimizations", {})
+        logger.info(f"Optimizations:")
+        logger.info(f"  - SubprocVecEnv: {opt_config.get('use_subproc_vec_env', True)}")
+        logger.info(f"  - AMP (Mixed Precision): {opt_config.get('use_amp', True)}")
+        logger.info(f"  - PyTorch Compile: {opt_config.get('use_torch_compile', False)}")
+        logger.info(f"  - Pinned Memory: {opt_config.get('use_pinned_memory', True)}")
+        logger.info(f"  - Batch Inference: {opt_config.get('batch_inference', True)}")
+        logger.info(f"  - Action Repeat: {opt_config.get('action_repeat', 1)}")
+        
         logger.info(f"Auto Resume: {self.auto_resume}")
         logger.info(
             f"Model Parameters: {sum(p.numel() for p in self.model.parameters()):,}"
@@ -524,12 +556,14 @@ class TrainingLoop:
         # Create environment(s) for experience collection
         env = None
         try:
+            opt_config = self.config.raw_config.get("training", {}).get("optimizations", {})
             if self.num_envs > 1:
                 env = create_vectorized_env(
                     self.num_envs,
                     Path("configs/rewards.yaml"),
                     simulation_mode=True,
                     debug_mode=self.debug_mode,
+                    opt_config=opt_config,
                 )
                 is_vec_env = True
                 logger.info("[OK] Vectorized envs ready")

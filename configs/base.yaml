@@ -30,6 +30,31 @@ training:
     dataset_path: "data/telemetry_logs"
     pretrain_epochs: 10
     pretrain_lr: 1.0e-3
+  
+  # Performance optimizations (Phase 1)
+  optimizations:
+    # Environment vectorization
+    use_subproc_vec_env: true  # Use SubprocVecEnv for true multiprocessing (Linux)
+    force_dummy_vec_env: false  # Force DummyVecEnv even on Linux (for debugging)
+    
+    # Mixed precision training (AMP)
+    use_amp: true  # Automatic Mixed Precision for GPU speedup
+    amp_dtype: "float16"  # "float16" or "bfloat16" (bfloat16 requires newer GPUs)
+    
+    # PyTorch optimizations
+    use_torch_compile: false  # PyTorch 2.0+ compile (can cause issues on some systems)
+    compile_mode: "default"  # "default", "reduce-overhead", "max-autotune"
+    
+    # Memory optimizations
+    use_pinned_memory: true  # Use pinned memory for faster CPU-GPU transfers
+    num_workers: 4  # DataLoader workers for async data loading
+    
+    # Action repeat for faster training
+    action_repeat: 1  # Repeat each action N times (1 = no repeat)
+    
+    # Batch inference
+    batch_inference: true  # Batch observations for faster inference
+    inference_batch_size: 8  # Batch size for inference (should match num_envs)
 
 network:
   architecture: "mlp"  # "mlp", "cnn", or "cnn_lstm"
