@@ -151,21 +151,21 @@ class EvaluationManager:
             if checkpoint:
                 # Validate checkpoint structure
                 if not isinstance(checkpoint, dict):
-                    logger.warning(f"Invalid checkpoint format (not a dict): {type(checkpoint)}")
-                    checkpoint = {"agent_id": "unknown_checkpoint"}
-                
-                checkpoint_id = checkpoint.get("agent_id", "past_checkpoint")
-                cp_wins, cp_losses = self._simulate_games_vs_opponent(
-                    model, checkpoint_id, self.games_per_opponent
-                )
-                opponent_results[checkpoint_id] = {
-                    "wins": cp_wins,
-                    "losses": cp_losses,
-                    "games": self.games_per_opponent,
-                    "win_rate": cp_wins / self.games_per_opponent,
-                }
-                total_wins += cp_wins
-                total_games += self.games_per_opponent
+                    logger.error(f"Invalid checkpoint format (expected dict, got {type(checkpoint)})")
+                    # Skip this opponent rather than create placeholder
+                else:
+                    checkpoint_id = checkpoint.get("agent_id", "past_checkpoint")
+                    cp_wins, cp_losses = self._simulate_games_vs_opponent(
+                        model, checkpoint_id, self.games_per_opponent
+                    )
+                    opponent_results[checkpoint_id] = {
+                        "wins": cp_wins,
+                        "losses": cp_losses,
+                        "games": self.games_per_opponent,
+                        "win_rate": cp_wins / self.games_per_opponent,
+                    }
+                    total_wins += cp_wins
+                    total_games += self.games_per_opponent
         
         # Calculate overall win rate
         overall_win_rate = total_wins / total_games if total_games > 0 else 0.5
