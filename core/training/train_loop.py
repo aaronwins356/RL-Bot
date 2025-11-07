@@ -416,18 +416,31 @@ class TrainingLoop:
         if opt_config.get("use_torch_compile", False):
             try:
                 compile_mode = opt_config.get("compile_mode", "default")
-                logger.info(f"Compiling model with torch.compile (mode={compile_mode})...")
                 
                 # Check if torch.compile is available
                 if not hasattr(torch, 'compile'):
                     logger.warning("torch.compile not available (requires PyTorch 2.0+), skipping compilation")
                 else:
-                    model = torch.compile(model, mode=compile_mode)
-                    logger.info("[OK] Model compiled successfully")
+                    # Windows platform: Triton is not supported, use eager backend
+                    os_name = platform.system()
+                    if os_name == "Windows":
+                        logger.warning("[Windows] Triton not supported, using eager backend")
+                        model = torch.compile(model, backend="eager")
+                        logger.info("[OK] Model compiled with eager backend (Windows)")
+                    else:
+                        # Linux/Mac: Use default Inductor backend with specified mode
+                        logger.info(f"Compiling model with torch.compile (mode={compile_mode})...")
+                        model = torch.compile(model, mode=compile_mode)
+                        logger.info("[OK] Model compiled successfully")
             except AttributeError:
                 logger.warning("torch.compile not available (requires PyTorch 2.0+)")
+            except (RuntimeError, ImportError) as e:
+                # Catch Triton-related errors and other compilation issues
+                logger.warning(f"[WARN] torch.compile failed: {e}")
+                logger.info("Falling back to uncompiled model")
             except Exception as e:
-                logger.warning(f"torch.compile failed: {e}")
+                logger.warning(f"[WARN] torch.compile failed: {e}")
+                logger.info("Falling back to uncompiled model")
 
         return model
 
