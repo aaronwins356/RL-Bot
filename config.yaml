@@ -1,0 +1,94 @@
+# RL-Bot Training Configuration
+# This file contains all hyperparameters for training the Rocket League bot
+
+# Training parameters
+training:
+  total_timesteps: 10_000_000  # Total training steps
+  batch_size: 4096              # PPO batch size
+  n_steps: 2048                 # Steps per environment per update
+  n_epochs: 10                  # PPO epochs per update
+  learning_rate: 3.0e-4         # Initial learning rate
+  gamma: 0.99                   # Discount factor
+  gae_lambda: 0.95              # GAE lambda for advantage estimation
+  clip_range: 0.2               # PPO clipping range
+  ent_coef: 0.01                # Entropy coefficient
+  vf_coef: 0.5                  # Value function coefficient
+  max_grad_norm: 0.5            # Gradient clipping
+  use_adaptive_lr: true         # Enable adaptive learning rate
+  lr_schedule: "linear"         # Learning rate schedule: linear, constant, exponential
+  
+# Network architecture
+network:
+  hidden_sizes: [512, 512, 256]  # Hidden layer sizes
+  activation: "relu"              # Activation function: relu, tanh, elu
+  use_layer_norm: false          # Use layer normalization
+  orthogonal_init: true          # Use orthogonal initialization
+  
+# Environment settings
+environment:
+  num_envs: 4                   # Number of parallel environments
+  team_size: 1                  # Players per team (1 = 1v1, 2 = 2v2, 3 = 3v3)
+  tick_skip: 8                  # Physics ticks to skip per action
+  timeout_seconds: 300          # Episode timeout in seconds
+  spawn_opponents: true         # Spawn opponent bots
+  self_play: false              # Use self-play (experimental)
+  
+# Reward function weights
+rewards:
+  # Sparse rewards (event-based)
+  goal_scored: 10.0
+  goal_conceded: -10.0
+  own_goal: -10.0
+  save: 3.0
+  shot_on_goal: 1.0
+  demo: 2.0
+  demo_received: -2.0
+  
+  # Dense rewards (continuous)
+  velocity_ball_to_goal: 0.5    # Ball velocity toward opponent goal
+  velocity_player_to_ball: 0.1  # Player velocity toward ball
+  touch_ball: 0.5               # Ball touch bonus
+  touch_ball_aerial: 1.0        # Aerial touch bonus
+  align_ball_goal: 0.2          # Alignment between ball and goal
+  boost_pickup: 0.1             # Boost pad collection
+  
+  # Penalties
+  boost_waste: -0.01            # Penalty for wasting boost
+  ball_distance_penalty: -0.1   # Penalty for being far from ball
+  wall_touch_penalty: -0.05     # Penalty for hitting walls
+  
+  # Advanced mechanics rewards
+  aerial_touch: 0.5
+  aerial_goal: 5.0
+  flick_attempt: 0.3
+  bump_attempt: 0.2
+  
+# Normalization settings
+normalization:
+  normalize_observations: true   # Normalize observations
+  normalize_rewards: true        # Normalize rewards
+  clip_obs: 10.0                 # Clip observations to this range
+  clip_reward: 10.0              # Clip rewards to this range
+  
+# Logging and checkpointing
+logging:
+  log_interval: 10              # Log every N updates
+  eval_interval: 100            # Evaluate every N updates
+  save_interval: 500            # Save checkpoint every N updates
+  tensorboard_dir: "logs/tensorboard"
+  checkpoint_dir: "checkpoints"
+  keep_best_only: true          # Only keep best checkpoint by reward
+  
+# Evaluation settings
+evaluation:
+  num_eval_episodes: 20         # Episodes per evaluation
+  eval_deterministic: true      # Use deterministic policy for eval
+  track_elo: true               # Track Elo rating
+  initial_elo: 1000             # Initial Elo rating
+  k_factor: 32                  # Elo K-factor
+  
+# Device settings
+device: "auto"  # auto, cuda, cpu - auto will detect GPU availability
+
+# Random seed for reproducibility
+seed: 42

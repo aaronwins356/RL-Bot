@@ -1,24 +1,21 @@
-# Include everything the framework requires
-# You will automatically get updates for all versions starting with "1.".
-rlbot==1.*
---find-links https://download.pytorch.org/whl/torch_stable.html
-torch==2.0.1+cpu
-numpy
+# Core RL dependencies
+rlgym>=2.0.1
+rlgym-tools>=1.8.3
+rlgym-sim>=2.0.1
+gymnasium>=0.29.0
 
-# ML and training dependencies
-tensorboard>=2.10.0
-pyyaml>=6.0
-omegaconf>=2.3.0
-stable-baselines3>=2.0.0
+# Deep learning
+torch>=2.2.0
+numpy>=1.24.0
 
-# Testing dependencies
-pytest>=7.0.0
-pytest-cov>=4.0.0
+# Training and logging
+tensorboard>=2.14.0
+pyyaml>=6.0.1
 
-# Code quality
-black>=22.0.0
-flake8>=5.0.0
-mypy>=0.990
+# Utilities
+tqdm>=4.65.0
+matplotlib>=3.7.0
 
-# This will cause pip to auto-upgrade and stop scaring people with warning messages
-pip
+# Optional: For evaluation visualization
+seaborn>=0.12.0
+pandas>=2.0.0
