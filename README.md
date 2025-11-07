@@ -31,12 +31,22 @@ rlbot gui
 
 ### Training (One Command)
 
+**Windows (PowerShell):**
 ```powershell
-# Windows PowerShell - Single line training with professional display
+# Single line training with professional display
 .\train.ps1
 
 # With custom settings
 .\train.ps1 -Timesteps 10000000 -Device cuda -Config configs/base.yaml
+```
+
+**Linux/Mac (Bash):**
+```bash
+# Single line training with professional display
+./train.sh
+
+# With custom settings
+./train.sh -t 10000000 -d cuda -c configs/base.yaml
 ```
 
 ---
@@ -210,7 +220,8 @@ RL-Bot/
 │   └── ...
 │
 ├── bot.py                         # RLBot integration
-├── train.ps1                      # PowerShell training launcher
+├── train.ps1                      # PowerShell training launcher (Windows)
+├── train.sh                       # Bash training launcher (Linux/Mac)
 ├── requirements.txt               # Python dependencies
 └── README.md                      # This file
 ```
@@ -285,8 +296,9 @@ python scripts/train.py \
   --logdir logs/my_run
 ```
 
-### PowerShell Training (Windows)
+### Unified Training Scripts
 
+**Windows (PowerShell):**
 ```powershell
 # Simple one-line training
 .\train.ps1
@@ -299,6 +311,21 @@ python scripts/train.py \
 
 # Debug mode
 .\train.ps1 -Debug -Timesteps 1000
+```
+
+**Linux/Mac (Bash):**
+```bash
+# Simple one-line training
+./train.sh
+
+# With custom options
+./train.sh -t 10000000 -d cuda -a
+
+# Force specific stage
+./train.sh -s 3 -t 500000
+
+# Debug mode
+./train.sh -D -t 1000
 ```
 
 ### Performance-Based Transitions
