@@ -254,10 +254,11 @@ class LeagueManager:
         probabilities /= probabilities.sum()
         
         # Sample opponent
-        selected = np.random.choice(opponents, p=probabilities)
+        selected_idx = np.random.choice(len(opponents), p=probabilities)
+        selected = opponents[selected_idx]
         selected.last_played = datetime.now()
         
-        logger.debug(f"Selected opponent: {selected.agent_id} (Elo: {selected.elo:.0f}, p={probabilities[opponents.index(selected)]:.3f})")
+        logger.debug(f"Selected opponent: {selected.agent_id} (Elo: {selected.elo:.0f}, p={probabilities[selected_idx]:.3f})")
         return selected
     
     def update_elo(

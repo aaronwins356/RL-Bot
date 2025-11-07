@@ -178,7 +178,10 @@ class DenseRewardShaper:
             velocity_reward = self.ball_velocity_weight * ball_direction
             total_reward += velocity_reward
         
-        self.last_ball_position = ball_position.copy() if isinstance(ball_position, np.ndarray) else ball_position
+        # Always ensure ball_position is a numpy array for consistent copying
+        if not isinstance(ball_position, np.ndarray):
+            ball_position = np.asarray(ball_position)
+        self.last_ball_position = ball_position.copy()
         
         # Idle penalty
         if not ball_touched:

@@ -149,6 +149,11 @@ class EvaluationManager:
             # Select most recent checkpoint
             checkpoint = opponent_pool[-1] if opponent_pool else None
             if checkpoint:
+                # Validate checkpoint structure
+                if not isinstance(checkpoint, dict):
+                    logger.warning(f"Invalid checkpoint format (not a dict): {type(checkpoint)}")
+                    checkpoint = {"agent_id": "unknown_checkpoint"}
+                
                 checkpoint_id = checkpoint.get("agent_id", "past_checkpoint")
                 cp_wins, cp_losses = self._simulate_games_vs_opponent(
                     model, checkpoint_id, self.games_per_opponent

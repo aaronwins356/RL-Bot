@@ -1,0 +1,84 @@
+{
+  "benchmark_info": {
+    "date": "2024-11-07",
+    "system": "To be determined",
+    "gpu": "To be determined",
+    "cpu": "To be determined",
+    "pytorch_version": "To be determined",
+    "cuda_version": "To be determined"
+  },
+  "training_performance": {
+    "timesteps_per_second": null,
+    "fps": null,
+    "gpu_utilization_percent": null,
+    "memory_mb": null,
+    "samples_per_second": null
+  },
+  "elo_progression": {
+    "steps": [],
+    "elo": [],
+    "confidence": [],
+    "notes": "To be populated during training"
+  },
+  "reward_curves": {
+    "mean_reward": [],
+    "std_reward": [],
+    "episodes": [],
+    "notes": "Episode rewards over time"
+  },
+  "training_metrics": {
+    "policy_loss": [],
+    "value_loss": [],
+    "entropy": [],
+    "kl_divergence": [],
+    "clip_fraction": [],
+    "explained_variance": []
+  },
+  "curriculum_progression": {
+    "stage_transitions": [],
+    "time_in_1v1": null,
+    "time_in_1v2": null,
+    "time_in_2v2": null
+  },
+  "league_stats": {
+    "total_agents": [],
+    "past_agents": [],
+    "exploiters": [],
+    "avg_elo_past": [],
+    "notes": "League composition over time"
+  },
+  "success_criteria": {
+    "no_tensor_errors": null,
+    "min_fps": {
+      "target": 15,
+      "actual": null,
+      "passed": null
+    },
+    "min_gpu_util": {
+      "target": 40,
+      "actual": null,
+      "passed": null
+    },
+    "stable_entropy_decay": null,
+    "stable_kl": {
+      "target_range": [0.01, 0.03],
+      "actual_avg": null,
+      "passed": null
+    },
+    "elo_300k": {
+      "target": 1550,
+      "actual": null,
+      "passed": null
+    },
+    "elo_1m": {
+      "target": 1700,
+      "actual": null,
+      "passed": null
+    }
+  },
+  "notes": [
+    "This file will be populated with actual benchmark results during training.",
+    "Run benchmark: python scripts/verify_and_benchmark.py",
+    "Monitor training: tensorboard --logdir logs/latest_run/tensorboard"
+  ]
+}
