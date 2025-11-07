@@ -18,7 +18,7 @@ readonly COLOR_RESET='\033[0m'          # Reset
 # Default values
 TIMESTEPS=10000000
 DEVICE="auto"
-CONFIG="configs/base.yaml"
+CONFIG="configs/training_optimized.yaml"
 LOGDIR=""
 AERIAL_CURRICULUM=false
 CURRICULUM_STAGE=-1
@@ -69,7 +69,7 @@ show_help() {
     echo -e "${COLOR_HIGHLIGHT}OPTIONS:${COLOR_RESET}"
     print_info "  -t, --timesteps <int>         " "Total training timesteps (default: 10000000)"
     print_info "  -d, --device <cuda|cpu|auto>  " "Training device (default: auto)"
-    print_info "  -c, --config <path>           " "Configuration file (default: configs/base.yaml)"
+    print_info "  -c, --config <path>           " "Configuration file (default: configs/training_optimized.yaml)"
     print_info "  -l, --logdir <path>           " "Log directory (default: auto-generated)"
     print_info "  -a, --aerial                  " "Enable aerial curriculum"
     print_info "  -s, --stage <0-8>             " "Force specific curriculum stage"
@@ -140,7 +140,7 @@ done
 
 # Display header
 clear
-print_header "RL-Bot Training Launcher v1.0.0"
+print_header "RL-Bot Training Launcher v2.0.0 - Optimized Edition"
 
 # Check Python installation
 print_step "Checking Python installation..." "INFO"
