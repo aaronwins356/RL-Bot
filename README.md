@@ -7,6 +7,10 @@ This is a complete rebuild focused on simplicity, maintainability, and ease of e
 ## 🎯 Features
 
 - **Simple PPO Implementation**: Clean, readable PPO training loop
+- **Modular Behavior System**: Hardcoded kickoff, recovery, and boost management behaviors
+- **Ball Prediction**: Physics-based ball trajectory prediction for aerials and positioning
+- **Team Play Support**: Observations for 1v1, 2v2, and 3v3 with teammate/opponent awareness
+- **Advanced Rewards**: Positioning, rotation, and game sense reward components
 - **Modular Reward System**: Easy-to-customize reward components
 - **Modern Dependencies**: Latest versions of rlgym, gymnasium, and PyTorch
 - **Automatic Device Detection**: Seamlessly trains on CPU or GPU
@@ -14,6 +18,7 @@ This is a complete rebuild focused on simplicity, maintainability, and ease of e
 - **Checkpoint Management**: Automatic saving and resuming
 - **Elo Rating System**: Track performance over time
 - **Vectorized Training**: Parallel environments for faster training
+- **RLBot Compatible**: Deploy trained agents in actual Rocket League matches
 
 ## 📁 Project Structure
 
@@ -23,10 +28,15 @@ rl_bot/
 │   ├── env_setup.py          # rlgym environment configuration
 │   ├── model.py               # PyTorch policy and value networks
 │   ├── reward_functions.py    # Modular reward components
+│   ├── behaviors.py           # Hardcoded behaviors (kickoff, recovery, etc.)
+│   ├── agent.py               # Modular agent with behavior overrides
+│   ├── ball_prediction.py     # Ball trajectory prediction
+│   ├── advanced_obs.py        # Team-aware observation builders
 │   └── utils.py               # Logging, device management, checkpointing
 ├── train.py                   # PPO training loop
 ├── eval.py                    # Evaluation and Elo tracking
 ├── main.py                    # Entry point
+├── run_bot.py                 # RLBot deployment wrapper
 ├── config.yaml                # Training configuration
 └── requirements.txt           # Dependencies
 ```
@@ -140,8 +150,61 @@ The bot uses modular reward components that can be easily customized:
 ### Advanced Mechanics
 - **Flick Attempt**: +0.3 for attempting flicks
 - **Bump Attempt**: +0.2 for bumping opponents
+- **Positioning**: Rewards good defensive/offensive positioning
+- **Rotation**: Rewards proper rotation in team play (2v2, 3v3)
 
 All rewards can be customized in `config.yaml` under the `rewards` section.
+
+## 🤖 Modular Behavior System
+
+The bot combines learned policy with hardcoded behaviors for critical situations:
+
+### Behavior Modules
+
+1. **Kickoff Manager**: Fast, optimized kickoff routine (Nexto-inspired)
+   - Rushes to ball with boost
+   - Executes front flip at optimal distance
+   - Automatically detects kickoff scenarios
+
+2. **Recovery Manager**: Aerial recovery and landing control
+   - Reorients car wheels-down after aerials
+   - Helps regain control after flips/tumbles
+   - Minimizes time spent upside-down
+
+3. **Boost Manager**: Smart boost collection (experimental)
+   - Guides to boost pads when boost is low
+   - Only activates when ball is far away
+
+### Configuration
+
+Enable/disable behaviors in `config.yaml`:
+
+```yaml
+behaviors:
+  enabled: true
+  kickoff_enabled: true
+  recovery_enabled: true
+  boost_management_enabled: false
+```
+
+The behavior system can be disabled to use only the learned policy.
+
+## 🔮 Ball Prediction
+
+The bot includes physics-based ball trajectory prediction:
+
+- Predicts future ball positions up to 3 seconds ahead
+- Accounts for gravity, drag, and wall bounces
+- Used for aerial opportunities and positioning
+- Can be included in agent observations
+
+Enable predictions in observations:
+
+```yaml
+environment:
+  obs_builder: "team_aware"  # or "compact"
+  include_predictions: true
+```
 
 ## 📊 Training Progress
 

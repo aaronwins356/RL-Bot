@@ -66,6 +66,10 @@ rewards:
   flick_attempt: 0.3
   bump_attempt: 0.2
   
+  # Positioning and rotation (for team play)
+  positioning_weight: 0.1       # Reward for good defensive/offensive positioning
+  rotation_weight: 0.05         # Reward for proper rotation in team play
+  
 # Normalization settings
 normalization:
   normalize_observations: true   # Normalize observations
