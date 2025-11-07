@@ -22,10 +22,15 @@ import logging
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.env.rocket_sim_env import RocketSimEnv
-from core.models.nets import ActorCriticNet
-from core.infra.config import ConfigManager
-from core.infra.performance import PerformanceMonitor
+try:
+    from core.env.rocket_sim_env import RocketSimEnv
+    from core.models.nets import ActorCriticNet
+    from core.infra.config import ConfigManager
+    from core.infra.performance import PerformanceMonitor
+except ImportError as e:
+    logger.error(f"Failed to import required modules: {e}")
+    logger.error("Make sure you're running from the repository root")
+    sys.exit(1)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

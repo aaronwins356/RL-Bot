@@ -384,10 +384,17 @@ class TrainingLoop:
             try:
                 compile_mode = opt_config.get("compile_mode", "default")
                 logger.info(f"Compiling model with torch.compile (mode={compile_mode})...")
-                model = torch.compile(model, mode=compile_mode)
-                logger.info("[OK] Model compiled successfully")
+                
+                # Check if torch.compile is available
+                if not hasattr(torch, 'compile'):
+                    logger.warning("torch.compile not available (requires PyTorch 2.0+), skipping compilation")
+                else:
+                    model = torch.compile(model, mode=compile_mode)
+                    logger.info("[OK] Model compiled successfully")
+            except AttributeError:
+                logger.warning("torch.compile not available (requires PyTorch 2.0+)")
             except Exception as e:
-                logger.warning(f"torch.compile failed (requires PyTorch 2.0+): {e}")
+                logger.warning(f"torch.compile failed: {e}")
 
         return model
 
