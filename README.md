@@ -310,7 +310,7 @@ python scripts/train.py \
 .\train.ps1 -CurriculumStage 3 -Timesteps 500000
 
 # Debug mode
-.\train.ps1 -Debug -Timesteps 1000
+.\train.ps1 -DebugMode -Timesteps 1000
 ```
 
 **Linux/Mac (Bash):**
