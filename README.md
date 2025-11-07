@@ -1,6 +1,17 @@
 # RL-Bot - Modular Hybrid Aerial-Capable Rocket League Bot
 
-An advanced Rocket League bot with modular architecture, combining rule-based tactics and ML-driven decision making for SSL-level performance. Features hybrid policy system, aerial shot awareness, and boost efficiency logic.
+An advanced Rocket League bot with modular architecture, combining rule-based tactics and ML-driven decision making for SSL-level performance. Features hybrid policy system, aerial shot awareness, boost efficiency logic, and **hierarchical control for advanced mechanics**.
+
+## 🚀 NEW: Hierarchical RL/IL Pipeline
+
+This bot now includes a comprehensive **hierarchical control + curriculum learning system** for advanced mechanics:
+- **11 Skill Programs**: Fast aerials, ceiling shots, flip resets, musty flicks, breezi, double taps, wall reads, and more
+- **Opportunity Detector**: AI-powered game state classification with Thompson sampling
+- **Risk-Aware Execution**: Only attempts flashy mechanics when safe and viable
+- **Strict Evaluation Gates**: Pass rates from 30% to 88% for promotion
+- **Sophisticated Reward Shaping**: Contact quality, style bonuses, safety costs
+
+👉 See [HIERARCHICAL_SYSTEM.md](HIERARCHICAL_SYSTEM.md) for full documentation
 
 ## Project Overview
 
@@ -8,6 +19,7 @@ This bot uses a **modular hybrid approach**:
 - **Rule-Based Policy**: Tactical decisions for kickoffs, defense, aerials, and boost management
 - **ML Policy**: Neural network trained with PPO for general gameplay
 - **Hybrid Policy**: Intelligent routing between rule and ML based on confidence and context
+- **Hierarchical Controller**: 3-layer system for advanced mechanics (NEW!)
 - **Aerial Capabilities**: Detection and execution of aerial opportunities with air control
 - **Boost Efficiency**: Strategic boost collection and conservation
 - **Observation Encoder**: 180-feature encoding including aerial-specific features
@@ -23,29 +35,63 @@ core/
     ml_policy.py      - ML inference with confidence estimation
     hybrid_policy.py  - Intelligent policy routing
     intents.py        - High-level action intents
+  
+  hierarchical_controller.py  - NEW: 3-layer hierarchical control
+  
+  opportunity_detector/  # NEW: Game state classification
+    detector.py       - OD model with Thompson sampling
+    risk_scorer.py    - Risk assessment & attempt selection
+  
+  skill_programs/    # NEW: 11 modular micro-policies
+    base.py           - SkillProgram base class
+    fast_aerial.py    - Fast aerial (10-12 frame timing)
+    ceiling_shot.py   - Ceiling setup & shot
+    flip_reset.py     - 4-wheel flip reset detection
+    musty.py          - Musty flick (60-110° nose)
+    breezi.py         - Breezi (5-9 Hz oscillation)
+    double_tap.py     - Backboard double tap
+    ... and more
+  
+  llc/             # NEW: Low-level controller
+    __init__.py       - PID, helpers, detectors
+  
   env/             # Environment and wrappers
     rocket_sim_env.py - Gym-compatible RL environment
     wrappers.py       - Observation/reward wrappers
+  
   features/        # Feature engineering
     encoder.py        - Observation encoding (180 features)
+  
   models/          # Neural network architectures
     ppo.py            - PPO implementation
     nets.py           - Network architectures (MLP, CNN-LSTM)
+  
   training/        # Training infrastructure
     train_loop.py     - Main training loop
     buffer.py         - Experience replay buffer
     offline_dataset.py- Offline training support
     eval.py           - Elo rating and evaluation
     selfplay.py       - Self-play curriculum
+    hierarchical_rewards.py  - NEW: Advanced reward shaping
+    drill_evaluator.py       - NEW: Evaluation gates
+  
   infra/           # Infrastructure utilities
     logging.py        - TensorBoard and JSONL logging
     config.py         - YAML configuration management
     checkpoints.py    - Model checkpointing
     profiler.py       - Performance profiling
-tests/             # Unit tests (18+ tests)
+
+configs/
+  base.yaml         - Training and network config
+  rewards.yaml      - Reward shaping configuration
+  hierarchical_rl.yaml  - NEW: Hierarchical system config
+
+tests/             # Unit tests (30+ tests)
   test_encoder.py
   test_rule_policy.py
   test_hybrid_policy.py
+  hierarchical/     # NEW: Hierarchical system tests
+    test_hierarchical.py  - 16 unit tests
   test_rocket_sim_env.py
   test_wrappers.py
   ...
