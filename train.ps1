@@ -31,7 +31,7 @@
 .PARAMETER OfflinePretraining
     Enable offline pretraining with behavioral cloning
 
-.PARAMETER Debug
+.PARAMETER DebugMode
     Enable debug mode with verbose logging
 
 .PARAMETER Help
@@ -46,7 +46,7 @@
     Train for 5M steps on GPU with aerial curriculum
 
 .EXAMPLE
-    .\train.ps1 -Debug -Timesteps 1000
+    .\train.ps1 -DebugMode -Timesteps 1000
     Quick debug run with 1000 steps
 
 .NOTES
@@ -80,7 +80,7 @@ param(
     [switch]$OfflinePretraining,
     
     [Parameter(Mandatory=$false)]
-    [switch]$Debug,
+    [switch]$DebugMode,
     
     [Parameter(Mandatory=$false)]
     [switch]$Help
@@ -143,10 +143,10 @@ function Write-Step {
         [string]$Status = 'INFO'
     )
     $symbol = switch ($Status) {
-        'SUCCESS' { '✓'; $color = $ColorScheme.Success }
-        'ERROR' { '✗'; $color = $ColorScheme.Error }
-        'WARNING' { '⚠'; $color = $ColorScheme.Warning }
-        default { '→'; $color = $ColorScheme.Info }
+        'SUCCESS' { '+'; $color = $ColorScheme.Success }
+        'ERROR' { 'X'; $color = $ColorScheme.Error }
+        'WARNING' { '!'; $color = $ColorScheme.Warning }
+        default { '->'; $color = $ColorScheme.Info }
     }
     Write-ColorText "  $symbol " -Color $color -NoNewline
     Write-ColorText "$Text" -Color $ColorScheme.Info
@@ -166,7 +166,7 @@ function Show-Help {
     Write-InfoLine "  -AerialCurriculum          " "Enable aerial curriculum"
     Write-InfoLine "  -CurriculumStage <0-8>     " "Force specific stage"
     Write-InfoLine "  -OfflinePretraining        " "Enable offline pretraining"
-    Write-InfoLine "  -Debug                     " "Debug mode with verbose logging"
+    Write-InfoLine "  -DebugMode                 " "Debug mode with verbose logging"
     Write-InfoLine "  -Help                      " "Show this help message`n"
     
     Write-ColorText "EXAMPLES:" -Color $ColorScheme.Highlight
@@ -177,7 +177,7 @@ function Show-Help {
     Write-ColorText "  .\train.ps1 -Timesteps 5000000 -Device cuda -AerialCurriculum`n" -Color $ColorScheme.Info
     
     Write-ColorText "  # Debug mode" -Color $ColorScheme.Dim
-    Write-ColorText "  .\train.ps1 -Debug -Timesteps 1000`n" -Color $ColorScheme.Info
+    Write-ColorText "  .\train.ps1 -DebugMode -Timesteps 1000`n" -Color $ColorScheme.Info
     
     Write-Host ""
     Write-ColorText "NOTE: " -Color $ColorScheme.Highlight -NoNewline
@@ -279,7 +279,7 @@ if ($CurriculumStage -ge 0) {
 if ($OfflinePretraining) {
     Write-InfoLine "Pretraining    " "Enabled"
 }
-if ($Debug) {
+if ($DebugMode) {
     Write-InfoLine "Debug Mode     " "Enabled"
 }
 
@@ -309,7 +309,7 @@ if ($OfflinePretraining) {
     $pythonArgs += "--offline-pretrain"
 }
 
-if ($Debug) {
+if ($DebugMode) {
     $pythonArgs += "--debug"
 }
 
