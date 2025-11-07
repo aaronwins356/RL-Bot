@@ -4,49 +4,68 @@
 training:
   algorithm: "ppo"
   total_timesteps: 1000000  # Target: 1M steps to reach 1550-1700 Elo
-  batch_size: 12288  # Reduced from 32768 for faster updates (8192-16384 range)
-  n_epochs: 4  # Increased from 3 for better sample efficiency
-  learning_rate: 3.0e-4  # Reduced from 8e-4 for stability
-  clip_range: 0.2
-  gamma: 0.99  # Standard discount factor
-  gae_lambda: 0.96  # Tuned GAE lambda (0.95-0.97 range)
-  vf_coef: 0.5
-  ent_coef: 0.01  # Will be annealed during training
-  max_grad_norm: 0.5
-  num_envs: 16  # Increased from 8 for better throughput
+  batch_size: 8192  # Optimal batch size from requirements
+  n_epochs: 4  # Mini-batches = 4
+  learning_rate: 1.5e-4  # Optimal from requirements (1.5 × 10⁻⁴)
+  clip_range: 0.2  # Start at 0.2, will linearly decay to 0.1
+  clip_range_decay: true  # Enable clip range decay
+  clip_range_min: 0.1  # Final clip range
+  gamma: 0.99  # Discount factor γ
+  gae_lambda: 0.97  # λ for GAE
+  vf_coef: 0.5  # Value loss coefficient
+  ent_coef: 0.02  # Start entropy coefficient, decays to 0.005
+  ent_coef_decay: true  # Enable entropy coefficient decay
+  ent_coef_min: 0.005  # Final entropy coefficient
+  max_grad_norm: 0.5  # Gradient clipping norm
+  num_envs: 16  # Vector environments (AsyncVectorEnv preferred)
   rollout_length: 256
+  max_episode_steps: 300  # Maximum episode steps
+  action_repeat: 2  # Action repeat for efficiency
   
-  # Learning rate scheduling
+  # Learning rate scheduling - CosineAnnealingLR
   lr_scheduler:
     enabled: true
-    type: "cosine"  # Cosine annealing for smooth decay
-    min_lr: 3.0e-5  # Final LR = 10% of initial
-    warmup_steps: 10000  # 1% of total steps for warmup
+    type: "cosine"  # CosineAnnealingLR
+    min_lr: 3.0e-5  # min LR = 3 × 10⁻⁵
+    warmup_steps: 0  # No warmup in requirements
   
   # Early stopping - patience-based with EMA smoothing
   early_stop_patience: 8  # Increased patience for better convergence
   early_stop_threshold: 0.02  # Stop if variance < 2%
   elo_ema_window: 3  # Smooth Elo over last 3 evaluations
   
-  # Self-play settings with Elo-based progression
-  selfplay:
+  # League-based self-play system
+  league:
     enabled: true
-    curriculum_stages: ["1v1", "1v2", "2v2"]
-    opponent_update_freq: 50000  # Reduced from 100k for faster progression
-    elo_threshold: 1550  # Only advance if Elo > 1550
-    stage_specific_stats: true  # Track stats per curriculum stage
-    
-  # Curriculum learning
+    min_population: 8  # Minimum 8 agents
+    max_population: 12  # Maximum 12 agents
+    max_past_agents: 6  # Maximum past checkpoints
+    max_exploiters: 3  # Maximum exploiter agents
+    elo_k_factor: 32  # Elo K-factor
+    diversity_temperature: 1.0  # Softmax temperature for matchmaking
+    age_decay_rate: 0.1  # Exponential decay for older checkpoints
+    opponent_update_freq: 50000  # Add checkpoint every 50k steps
+  
+  # Curriculum learning with dynamic gating
   curriculum:
     enabled: true
-    elo_based_progression: true  # Advance only when Elo thresholds met
-    stage_thresholds:
-      - stage: 0  # 1v1 basic
-        elo_requirement: 1450
-      - stage: 1  # 1v2
-        elo_requirement: 1550
-      - stage: 2  # 2v2
-        elo_requirement: 1650
+    stages: ["1v1", "1v2", "2v2"]  # Three stages only
+    progression_rules:
+      - stage: "1v1"
+        base_elo: 1400
+        promotion_elo_delta: 100  # Promote if rolling Elo > 1500
+        promotion_win_rate: 0.55  # AND win rate > 0.55
+        demotion_win_rate: 0.45  # Demote if win rate < 0.45
+      - stage: "1v2"
+        base_elo: 1500
+        promotion_elo_delta: 100  # Promote if rolling Elo > 1600
+        promotion_win_rate: 0.55
+        demotion_win_rate: 0.45
+      - stage: "2v2"
+        base_elo: 1600
+        promotion_elo_delta: 100  # Already at final stage
+        promotion_win_rate: 0.55
+        demotion_win_rate: 0.45
 
   # Offline training (BC pretraining) - disabled by default
   offline:
@@ -81,13 +100,38 @@ training:
     # Gradient accumulation for larger effective batch size
     gradient_accumulation_steps: 1  # Disabled by default
     
-  # Normalization
+  # Advantage and reward normalization
   normalization:
-    normalize_observations: true  # Critical for stability
-    normalize_rewards: true  # Critical for convergence
-    clip_obs: 10.0  # Clip normalized obs to [-10, 10]
-    clip_reward: 10.0  # Clip normalized rewards
-    reward_gamma: 0.99  # Discount for reward normalization
+    normalize_advantages: true  # Normalize per-batch (mean=0, std=1)
+    normalize_rewards: true  # Running mean/std normalization
+    normalize_observations: true
+    reward_window: 100000  # Window = 10^5 steps for reward normalization
+    clip_obs: 10.0
+    clip_reward: 10.0
+    reward_gamma: 0.99
+  
+  # Reward shaping
+  reward_shaping:
+    enabled: true
+    ball_touch_reward: 0.05  # +0.05 for ball touch
+    shot_on_goal_reward: 0.10  # +0.10 for shots on goal
+    goal_reward: 1.0  # +1.0 for goal
+    own_goal_penalty: -1.0  # -1.0 for own goal
+    ball_velocity_weight: 0.02  # Small shaping for ball velocity
+    idle_penalty: -0.001  # Small penalty for idle time
+    normalize_final_reward: true  # Normalize combined reward to std ≈ 1.0
+  
+  # Evaluation configuration
+  evaluation:
+    enabled: true
+    eval_interval: 25000  # Evaluate every 25k steps
+    games_per_opponent: 100  # 100 games vs each opponent
+    num_opponents: 2  # Rule policy + 1 past checkpoint (total 200 games)
+    elo_k_factor: 32
+    elo_ema_alpha: 0.3  # EMA smoothing (α = 0.3)
+    early_stop_patience: 8  # Stop after 8 evals without improvement
+    early_stop_min_improvement: 10.0  # Minimum Elo improvement
+    early_stop_max_std: 15.0  # Confidence threshold (σ < 15)
 
 network:
   architecture: "mlp"
@@ -127,18 +171,29 @@ inference:
 
 logging:
   log_dir: "logs"
-  tensorboard: true
-  log_interval: 1000  # More frequent logging from 2000
-  save_interval: 25000  # More frequent checkpoints from 10000
-  eval_interval: 25000  # More frequent evaluation from 20000
-  eval_num_games: 10  # Reduced from 25 for faster iteration
+  tensorboard: true  # Or Weights & Biases
+  wandb:
+    enabled: false  # Enable for W&B tracking
+    project: "rlbot-league"
+    entity: null  # Set your W&B entity
+  log_interval: 1000
+  save_interval: 25000  # Save checkpoint every 25k steps
+  eval_interval: 25000  # Evaluate every 25k steps
+  eval_num_games: 200  # Total games (100 vs rule + 100 vs past)
   
-  # Additional metrics
-  log_gpu_utilization: true
-  log_fps: true
-  log_advantage_stats: true
-  log_value_error: true
-  log_entropy: true
+  # Metrics to track
+  track_elo: true
+  track_mean_reward: true
+  track_entropy: true
+  track_policy_loss: true
+  track_value_loss: true
+  track_kl: true
+  track_clip_fraction: true
+  track_gpu_utilization: true
+  track_timesteps_per_sec: true
+  track_memory_mb: true
+  track_curriculum_stage: true
+  track_league_composition: true
 
 checkpoints:
   save_dir: "checkpoints"

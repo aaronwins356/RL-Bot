@@ -15,12 +15,15 @@ from core.models.ppo import PPO
 from core.training.buffer import ReplayBuffer
 from core.training.selfplay import SelfPlayManager
 from core.training.eval import EloEvaluator
+from core.training.league_manager import LeagueManager
+from core.training.evaluation_manager import EvaluationManager
 from core.training.lr_scheduler import create_lr_scheduler
 from core.infra.config import Config
 from core.infra.logging import MetricsLogger, safe_log
 from core.infra.checkpoints import CheckpointManager
 from core.infra.performance import PerformanceMonitor
 from core.env.normalization_wrappers import VecNormalize
+from core.env.reward_wrapper import RewardWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -269,6 +272,37 @@ class TrainingLoop:
         )
         self.evaluator = EloEvaluator(log_dir=self.log_dir)
         self.performance_monitor = PerformanceMonitor(self.device)
+        
+        # League manager (if enabled)
+        league_config = config.raw_config.get("training", {}).get("league", {})
+        self.league_manager = None
+        if league_config.get("enabled", False):
+            self.league_manager = LeagueManager(
+                config=league_config,
+                log_dir=self.log_dir / "league"
+            )
+            logger.info("[OK] League manager initialized for self-play")
+        
+        # Enhanced evaluation manager (if enabled)
+        eval_config = config.raw_config.get("training", {}).get("evaluation", {})
+        self.evaluation_manager = None
+        if eval_config.get("enabled", False):
+            self.evaluation_manager = EvaluationManager(
+                config=eval_config,
+                log_dir=self.log_dir / "evaluation"
+            )
+            logger.info("[OK] Enhanced evaluation manager initialized")
+        
+        # Reward wrapper (if enabled)
+        reward_config = config.raw_config.get("training", {}).get("reward_shaping", {})
+        self.reward_wrapper = None
+        if reward_config.get("enabled", False):
+            self.reward_wrapper = RewardWrapper(
+                config=reward_config,
+                normalize=reward_config.get("normalize_final_reward", True),
+                use_dense_rewards=True,
+            )
+            logger.info("[OK] Reward wrapper initialized for dense rewards")
 
         # Curriculum manager (if enabled)
         curriculum_config = config.raw_config.get("training", {}).get("curriculum", {})
@@ -416,18 +450,31 @@ class TrainingLoop:
         if opt_config.get("use_torch_compile", False):
             try:
                 compile_mode = opt_config.get("compile_mode", "default")
-                logger.info(f"Compiling model with torch.compile (mode={compile_mode})...")
                 
                 # Check if torch.compile is available
                 if not hasattr(torch, 'compile'):
                     logger.warning("torch.compile not available (requires PyTorch 2.0+), skipping compilation")
                 else:
-                    model = torch.compile(model, mode=compile_mode)
-                    logger.info("[OK] Model compiled successfully")
+                    # Windows platform: Triton is not supported, use eager backend
+                    os_name = platform.system()
+                    if os_name == "Windows":
+                        logger.warning("[Windows] Triton not supported, using eager backend")
+                        model = torch.compile(model, backend="eager")
+                        logger.info("[OK] Model compiled with eager backend (Windows)")
+                    else:
+                        # Linux/Mac: Use default Inductor backend with specified mode
+                        logger.info(f"Compiling model with torch.compile (mode={compile_mode})...")
+                        model = torch.compile(model, mode=compile_mode)
+                        logger.info("[OK] Model compiled successfully")
             except AttributeError:
                 logger.warning("torch.compile not available (requires PyTorch 2.0+)")
+            except (RuntimeError, ImportError) as e:
+                # Catch Triton-related errors and other compilation issues
+                logger.warning(f"[WARN] torch.compile failed: {e}")
+                logger.info("Falling back to uncompiled model")
             except Exception as e:
-                logger.warning(f"torch.compile failed: {e}")
+                logger.warning(f"[WARN] torch.compile failed: {e}")
+                logger.info("Falling back to uncompiled model")
 
         return model
 
@@ -937,15 +984,34 @@ class TrainingLoop:
                 # Save checkpoint every 250k timesteps (Aaron's preference)
                 if self.timestep % 250000 == 0 and self.timestep > 0:
                     try:
-                        self._save_checkpoint()
+                        checkpoint_path = self._save_checkpoint()
                         logger.info(f"[OK] Auto-saved checkpoint at {self.timestep} steps")
+                        
+                        # Add to league if enabled
+                        if self.league_manager and checkpoint_path:
+                            current_elo = self.league_manager.get_main_agent_elo()
+                            self.league_manager.add_past_checkpoint(
+                                checkpoint_path,
+                                self.timestep,
+                                elo=current_elo,
+                            )
+                            self.league_manager.save_state()
                     except Exception as e:
                         logger.error(f"Checkpoint save failed: {e}")
                 
                 # Also save at regular intervals from config
                 if self.timestep % self.config.save_interval == 0:
                     try:
-                        self._save_checkpoint()
+                        checkpoint_path = self._save_checkpoint()
+                        
+                        # Add to league if enabled
+                        if self.league_manager and checkpoint_path:
+                            current_elo = self.league_manager.get_main_agent_elo()
+                            self.league_manager.add_past_checkpoint(
+                                checkpoint_path,
+                                self.timestep,
+                                elo=current_elo,
+                            )
                     except Exception as e:
                         logger.error(f"Regular checkpoint save failed: {e}")
 
@@ -1102,6 +1168,9 @@ class TrainingLoop:
 
         # Perform PPO update
         try:
+            # Update clip range decay if enabled
+            self.ppo.update_clip_range(self.timestep)
+            
             stats = self.ppo.update(
                 obs,
                 cat_actions,
@@ -1126,7 +1195,8 @@ class TrainingLoop:
                     f"PPO update | policy_loss={stats['policy_loss']:.4f} | "
                     f"value_loss={stats['value_loss']:.4f} | "
                     f"entropy_loss={stats['entropy_loss']:.4f} | "
-                    f"explained_var={stats['explained_variance']:.4f}"
+                    f"explained_var={stats['explained_variance']:.4f} | "
+                    f"clip_range={self.ppo.clip_range:.4f}"
                 )
                 if self.lr_scheduler is not None:
                     logger.debug(f"Learning rate: {new_lr:.6f}")
@@ -1204,6 +1274,9 @@ class TrainingLoop:
 
         Args:
             is_best: Whether this is the best checkpoint so far
+            
+        Returns:
+            Path to saved checkpoint
         """
         metrics = {
             "timestep": self.timestep,
@@ -1211,42 +1284,81 @@ class TrainingLoop:
             "eval_score": self.evaluator.get_elo(),
         }
 
-        self.checkpoint_manager.save_checkpoint(
+        checkpoint_path = self.checkpoint_manager.save_checkpoint(
             self.model, self.ppo.optimizer, self.timestep, metrics, is_best=is_best
         )
+        return checkpoint_path
 
     def _evaluate(self):
         """Evaluate model and check for early stopping."""
-        # Get num_games from config (default to constant if not specified)
-        num_games = self.config.raw_config.get("logging", {}).get(
-            "eval_num_games", DEFAULT_EVAL_GAMES
-        )
-
-        # Run full evaluation suite
-        results = self.evaluator.evaluate_full(
-            self.model, self.timestep, num_games=num_games
-        )
-
-        current_elo = self.evaluator.get_elo()
-
-        # Log metrics
-        self.logger.log_scalar("eval/elo", current_elo, self.timestep)
-
-        for opponent, result in results.items():
-            self.logger.log_scalar(
-                f"eval/{opponent}/win_rate", result["win_rate"], self.timestep
+        # Use enhanced evaluation manager if available
+        if self.evaluation_manager:
+            # Get opponent pool from league manager if available
+            opponent_pool = []
+            if self.league_manager:
+                past_agents = self.league_manager.get_agents_by_role("past")
+                opponent_pool = [agent.to_dict() for agent in past_agents]
+            
+            # Run evaluation
+            eval_result = self.evaluation_manager.evaluate(
+                self.model,
+                self.timestep,
+                opponent_pool=opponent_pool,
             )
-            self.logger.log_scalar(
-                f"eval/{opponent}/wins", result["wins"], self.timestep
+            
+            # Log metrics
+            self.logger.log_scalar("eval/elo", eval_result.elo, self.timestep)
+            self.logger.log_scalar("eval/elo_std", eval_result.elo_std, self.timestep)
+            
+            for opponent, opp_result in eval_result.opponent_results.items():
+                self.logger.log_scalar(
+                    f"eval/{opponent}/win_rate", opp_result["win_rate"], self.timestep
+                )
+                self.logger.log_scalar(
+                    f"eval/{opponent}/wins", opp_result["wins"], self.timestep
+                )
+            
+            # Save history
+            self.evaluation_manager.save_history()
+            
+            # Check for early stopping
+            if self.evaluation_manager.should_early_stop():
+                logger.warning("Early stopping criteria met!")
+                self.early_stop_counter = self.early_stop_patience  # Trigger stop
+            
+            current_elo = eval_result.elo
+        else:
+            # Fallback to original evaluation
+            # Get num_games from config (default to constant if not specified)
+            num_games = self.config.raw_config.get("logging", {}).get(
+                "eval_num_games", DEFAULT_EVAL_GAMES
             )
-            self.logger.log_scalar(
-                f"eval/{opponent}/losses", result["losses"], self.timestep
+
+            # Run full evaluation suite
+            results = self.evaluator.evaluate_full(
+                self.model, self.timestep, num_games=num_games
             )
+
+            current_elo = self.evaluator.get_elo()
+
+            # Log metrics
+            self.logger.log_scalar("eval/elo", current_elo, self.timestep)
+
+            for opponent, result in results.items():
+                self.logger.log_scalar(
+                    f"eval/{opponent}/win_rate", result["win_rate"], self.timestep
+                )
+                self.logger.log_scalar(
+                    f"eval/{opponent}/wins", result["wins"], self.timestep
+                )
+                self.logger.log_scalar(
+                    f"eval/{opponent}/losses", result["losses"], self.timestep
+                )
 
         self.logger.flush()
 
         logger.info(
-            f"Evaluation - Elo: {current_elo:.0f} (after {num_games} games per opponent)"
+            f"Evaluation - Elo: {current_elo:.0f}"
         )
 
         # Check for improvement
