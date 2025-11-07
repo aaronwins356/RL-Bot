@@ -69,16 +69,19 @@ class RecurrentPPO(PPO):
     def set_hidden_state(
         self,
         env_id: int,
-        hidden: Tuple[torch.Tensor, torch.Tensor]
+        hidden: Tuple[torch.Tensor, ...]
     ):
         """Set hidden state for an environment.
         
         Args:
             env_id: Environment ID
-            hidden: Hidden state tuple (h, c)
+            hidden: Hidden state tuple (h, c) for LSTM or (h,) for GRU
         """
         # Detach to prevent backprop through time beyond episode boundaries
-        self.hidden_states[env_id] = (hidden[0].detach(), hidden[1].detach())
+        if isinstance(hidden, tuple):
+            self.hidden_states[env_id] = tuple(h.detach() for h in hidden)
+        else:
+            self.hidden_states[env_id] = hidden.detach()
     
     def update_recurrent(
         self,
@@ -135,8 +138,10 @@ class RecurrentPPO(PPO):
                 
                 # Get advantages and returns for this sequence
                 seq_len = obs.shape[0]
-                seq_advantages = advantages[idx * seq_len:(idx + 1) * seq_len]
-                seq_returns = returns[idx * seq_len:(idx + 1) * seq_len]
+                seq_start_idx = idx * self.sequence_length
+                seq_end_idx = seq_start_idx + seq_len
+                seq_advantages = advantages[seq_start_idx:seq_end_idx]
+                seq_returns = returns[seq_start_idx:seq_end_idx]
                 
                 # Forward pass through sequence
                 hidden = hidden_init

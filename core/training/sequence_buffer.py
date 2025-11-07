@@ -212,9 +212,15 @@ class SequenceBuffer:
             last_gae = 0
             
             for t in reversed(range(len(rewards))):
-                if t == len(rewards) - 1:
-                    next_value = 0 if dones[t] else values[t]
+                if dones[t]:
+                    # Terminal state - no bootstrap
+                    next_value = 0
+                    last_gae = 0
+                elif t == len(rewards) - 1:
+                    # Last timestep but not terminal - use bootstrap value
+                    next_value = 0  # Could be replaced with actual bootstrap if available
                 else:
+                    # Normal case - use next value
                     next_value = values[t + 1]
                 
                 delta = rewards[t] + gamma * next_value - values[t]
