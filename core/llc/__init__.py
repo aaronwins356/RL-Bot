@@ -353,14 +353,21 @@ class LowLevelController:
         
         # Apply PID for target pose if specified
         if targets.target_orientation is not None:
-            # Compute orientation error and apply PID
-            # This is simplified; real implementation would use quaternion math
-            car_orient = obs.get('car_orientation', np.eye(3))
+            # TODO: Implement proper orientation control using quaternion math
+            # This requires:
+            # 1. Convert current orientation matrix to quaternion
+            # 2. Compute quaternion error between current and target
+            # 3. Convert error to axis-angle representation
+            # 4. Apply PID control on each axis
+            # 5. Map control outputs to yaw/pitch/roll inputs
+            #
+            # Example (placeholder):
+            # car_orient = obs.get('car_orientation', np.eye(3))
             # orientation_error = compute_orientation_error(car_orient, targets.target_orientation)
             # orientation_control = self.pid_orientation.update(orientation_error, self.dt)
-            # controls['yaw'] = orientation_control[0]
-            # controls['pitch'] = orientation_control[1]
-            # controls['roll'] = orientation_control[2]
+            # controls['yaw'] = np.clip(orientation_control[2], -1, 1)
+            # controls['pitch'] = np.clip(orientation_control[1], -1, 1)
+            # controls['roll'] = np.clip(orientation_control[0], -1, 1)
             pass
         
         # Apply stabilization if needed

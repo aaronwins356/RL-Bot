@@ -30,9 +30,17 @@ class SP_Breezi(SkillProgram):
         current_time = obs.get('time', 0.0)
         elapsed = current_time - self.start_time
         
-        # Oscillatory air roll
-        freq = (self.roll_freq_hz[0] + self.roll_freq_hz[1]) / 2
-        amp = (self.roll_amp[0] + self.roll_amp[1]) / 2
+        # Oscillatory air roll with varying frequency (between min and max)
+        # Use phase modulation to stay within range
+        freq_mid = (self.roll_freq_hz[0] + self.roll_freq_hz[1]) / 2
+        freq_range = (self.roll_freq_hz[1] - self.roll_freq_hz[0]) / 2
+        freq = freq_mid + freq_range * np.sin(0.5 * elapsed)  # Vary frequency slowly
+        
+        # Amplitude also varies within range
+        amp_mid = (self.roll_amp[0] + self.roll_amp[1]) / 2
+        amp_range = (self.roll_amp[1] - self.roll_amp[0]) / 2
+        amp = amp_mid + amp_range * np.cos(0.3 * elapsed)
+        
         targets.roll = amp * np.sin(2 * np.pi * freq * elapsed)
         
         return SkillProgramResult(targets=targets)

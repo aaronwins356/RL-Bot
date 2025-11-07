@@ -380,10 +380,26 @@ class DrillEvaluator:
         with open(path, 'w') as f:
             json.dump(output, f, indent=2)
     
-    # Drill implementations (placeholders)
+    # Drill implementations (placeholders - require environment integration)
+    # TODO: Replace with actual drill execution using physics simulation
     
     def _run_fast_aerial_drill(self, policy, ball_pos: np.ndarray) -> Tuple[bool, Dict[str, float]]:
-        """Run fast aerial drill (placeholder)."""
+        """Run fast aerial drill.
+        
+        NOTE: This is a placeholder implementation that returns random results.
+        In production, this should:
+        1. Spawn car and ball at specified positions
+        2. Execute policy in physics simulation
+        3. Measure contact distance and speed to goal
+        4. Return actual success/failure
+        
+        Args:
+            policy: Policy to evaluate
+            ball_pos: Ball spawn position
+            
+        Returns:
+            Tuple of (success, metrics)
+        """
         # TODO: Implement actual drill execution
         success = np.random.random() < 0.85  # Placeholder
         metrics = {
@@ -393,7 +409,11 @@ class DrillEvaluator:
         return success, metrics
     
     def _run_double_tap_drill(self, policy) -> Tuple[bool, Dict[str, float]]:
-        """Run double tap drill (placeholder)."""
+        """Run double tap drill.
+        
+        NOTE: Placeholder - requires physics simulation integration.
+        """
+        # TODO: Implement actual drill execution
         success = np.random.random() < 0.35  # Placeholder
         metrics = {
             'first_contact': True,
@@ -403,7 +423,11 @@ class DrillEvaluator:
         return success, metrics
     
     def _run_ceiling_drill(self, policy) -> Tuple[bool, Dict[str, float]]:
-        """Run ceiling drill (placeholder)."""
+        """Run ceiling drill.
+        
+        NOTE: Placeholder - requires physics simulation integration.
+        """
+        # TODO: Implement actual drill execution
         success = np.random.random() < 0.55  # Placeholder
         metrics = {
             'setup_success': True,
@@ -412,7 +436,11 @@ class DrillEvaluator:
         return success, metrics
     
     def _run_flip_reset_drill(self, policy) -> Tuple[bool, bool, Dict[str, float]]:
-        """Run flip reset drill (placeholder)."""
+        """Run flip reset drill.
+        
+        NOTE: Placeholder - requires physics simulation integration.
+        """
+        # TODO: Implement actual drill execution
         clean_reset = np.random.random() < 0.30
         conversion = np.random.random() < 0.15
         metrics = {
@@ -423,7 +451,11 @@ class DrillEvaluator:
         return clean_reset, conversion, metrics
     
     def _run_flashy_drill(self, policy, mechanic_name: str) -> Tuple[bool, Dict[str, float]]:
-        """Run flashy mechanic drill (placeholder)."""
+        """Run flashy mechanic drill.
+        
+        NOTE: Placeholder - requires physics simulation integration.
+        """
+        # TODO: Implement actual drill execution
         success = np.random.random() < 0.25  # Placeholder
         metrics = {
             'executed': True,

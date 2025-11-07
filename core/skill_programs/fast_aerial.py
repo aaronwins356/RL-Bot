@@ -61,10 +61,9 @@ class SP_FastAerial(SkillProgram):
             targets.boost = False
             targets.pitch = 0.0
             
-        # Phase 2: Boost + pitch up (after 2-4 frames)
+        # Phase 2: Boost + pitch up (after 2-4 frames, before second jump)
         elif (self.second_jump_frame is None and 
-              current_frame - self.first_jump_frame >= 2 and
-              current_frame - self.first_jump_frame < self.inter_jump_frames[0]):
+              2 <= current_frame - self.first_jump_frame < self.inter_jump_frames[0]):
             targets.jump = False
             targets.boost = boost > 10
             

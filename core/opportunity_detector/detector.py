@@ -216,10 +216,33 @@ class OpportunityDetector:
         Returns:
             Observation vector
         """
-        # This should match the encoder output format
-        # For now, create a dummy vector
+        # TODO: This should match the encoder output format from core/features/encoder.py
+        # For now, create a placeholder that extracts basic features
         obs_dim = self.config.get('model', {}).get('obs_dim', 180)
-        return np.zeros(obs_dim)
+        
+        # Extract basic features if available
+        features = []
+        
+        # Car state (position, velocity, orientation)
+        car_pos = obs.get('car_position', np.zeros(3))
+        car_vel = obs.get('car_velocity', np.zeros(3))
+        features.extend(car_pos)
+        features.extend(car_vel)
+        
+        # Ball state (position, velocity)
+        ball_pos = obs.get('ball_position', np.zeros(3))
+        ball_vel = obs.get('ball_velocity', np.zeros(3))
+        features.extend(ball_pos)
+        features.extend(ball_vel)
+        
+        # Pad to correct dimension
+        feature_array = np.array(features)
+        if len(feature_array) < obs_dim:
+            feature_array = np.pad(feature_array, (0, obs_dim - len(feature_array)), 'constant')
+        elif len(feature_array) > obs_dim:
+            feature_array = feature_array[:obs_dim]
+        
+        return feature_array
     
     def _select_sp(self, category: GameStateCategory) -> str:
         """Select SP within category using Thompson sampling.
