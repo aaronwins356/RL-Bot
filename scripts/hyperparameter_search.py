@@ -31,6 +31,11 @@ from core.training.train_loop import TrainingLoop
 logger = logging.getLogger(__name__)
 
 
+
+# Constant for failed trial scores
+FAILED_TRIAL_SCORE = -1000.0
+
+
 def objective(trial: optuna.Trial, base_config_path: Path, target_timesteps: int = 300000) -> float:
     """Optuna objective function for hyperparameter optimization.
     
@@ -125,8 +130,8 @@ def objective(trial: optuna.Trial, base_config_path: Path, target_timesteps: int
         
     except Exception as e:
         logger.error(f"Trial {trial.number} failed with error: {e}")
-        # Return very low score for failed trials
-        return -1000.0
+        # Return constant for failed trials
+        return FAILED_TRIAL_SCORE
 
 
 def run_optimization(

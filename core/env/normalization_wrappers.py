@@ -32,11 +32,17 @@ class RunningMeanStd:
         """Update running statistics with new batch of data.
         
         Args:
-            x: New data (can be batched)
+            x: New data (can be batched or scalar)
         """
+        # Handle scalar inputs
+        if np.isscalar(x):
+            x = np.array([[x]])
+        elif x.ndim == 1:
+            x = x.reshape(-1, 1)
+        
         batch_mean = np.mean(x, axis=0)
         batch_var = np.var(x, axis=0)
-        batch_count = x.shape[0] if len(x.shape) > 1 else 1
+        batch_count = x.shape[0] if x.ndim > 0 else 1
         
         self.update_from_moments(batch_mean, batch_var, batch_count)
     

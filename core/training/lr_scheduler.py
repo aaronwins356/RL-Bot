@@ -245,6 +245,29 @@ class AdaptiveLR(LRScheduler):
         return self.current_lr
 
 
+class ConstantLR(LRScheduler):
+    """Constant learning rate (no scheduling)."""
+    
+    def __init__(self, initial_lr: float):
+        """Initialize constant scheduler.
+        
+        Args:
+            initial_lr: Learning rate (constant)
+        """
+        super().__init__(initial_lr)
+    
+    def step(self, step: int) -> float:
+        """Get learning rate for current step.
+        
+        Args:
+            step: Current training step (unused)
+            
+        Returns:
+            Constant learning rate
+        """
+        return self.current_lr
+
+
 def create_lr_scheduler(
     scheduler_type: str,
     initial_lr: float,
@@ -291,7 +314,6 @@ def create_lr_scheduler(
             mode=kwargs.get("mode", "max"),
         )
     elif scheduler_type == "constant":
-        # No scheduling, return constant LR
-        return LRScheduler(initial_lr)
+        return ConstantLR(initial_lr)
     else:
         raise ValueError(f"Unknown scheduler type: {scheduler_type}")
