@@ -4,7 +4,7 @@ Helps agent plan aerials, intercepts, and positioning.
 """
 
 import numpy as np
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from dataclasses import dataclass
 
 
@@ -269,10 +269,3 @@ class PredictionFeatureExtractor:
                 return True, pred.time, pred.position
         
         return False, 0.0, ball_pos
-
-
-# Optional import to avoid hard dependency
-try:
-    from typing import Optional
-except ImportError:
-    Optional = None
