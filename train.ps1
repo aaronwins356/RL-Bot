@@ -6,6 +6,9 @@
     A unified PowerShell script for training the RL-Bot with a professional,
     color-coded display and easy-to-use parameters. Wraps the Python training
     script with a user-friendly interface.
+    
+    This script ensures proper UTF-8 encoding for all file operations to prevent
+    encoding errors with YAML configuration files.
 
 .PARAMETER Timesteps
     Total number of training timesteps (default: 10000000)
@@ -14,7 +17,7 @@
     Training device: 'cuda' or 'cpu' (default: auto-detect)
 
 .PARAMETER Config
-    Path to configuration file (default: configs/base.yaml)
+    Path to configuration file (default: configs/training_optimized.yaml)
 
 .PARAMETER LogDir
     Directory for training logs (default: auto-generated)
@@ -36,7 +39,7 @@
 
 .EXAMPLE
     .\train.ps1
-    Start training with default settings
+    Start training with optimized settings
 
 .EXAMPLE
     .\train.ps1 -Timesteps 5000000 -Device cuda -AerialCurriculum
@@ -48,7 +51,7 @@
 
 .NOTES
     Author: RL-Bot Team
-    Version: 1.0.0
+    Version: 2.0.0 - Optimized for RTX 3060 with advanced PPO features
 #>
 
 [CmdletBinding()]
@@ -61,7 +64,7 @@ param(
     [string]$Device = 'auto',
     
     [Parameter(Mandatory=$false)]
-    [string]$Config = 'configs/base.yaml',
+    [string]$Config = 'configs/training_optimized.yaml',
     
     [Parameter(Mandatory=$false)]
     [string]$LogDir = '',
@@ -158,7 +161,7 @@ function Show-Help {
     Write-ColorText "OPTIONS:" -Color $ColorScheme.Highlight
     Write-InfoLine "  -Timesteps <int>           " "Total training timesteps (default: 10000000)"
     Write-InfoLine "  -Device <cuda|cpu|auto>    " "Training device (default: auto)"
-    Write-InfoLine "  -Config <path>             " "Configuration file (default: configs/base.yaml)"
+    Write-InfoLine "  -Config <path>             " "Configuration file (default: configs/training_optimized.yaml)"
     Write-InfoLine "  -LogDir <path>             " "Log directory (default: auto-generated)"
     Write-InfoLine "  -AerialCurriculum          " "Enable aerial curriculum"
     Write-InfoLine "  -CurriculumStage <0-8>     " "Force specific stage"
@@ -167,7 +170,7 @@ function Show-Help {
     Write-InfoLine "  -Help                      " "Show this help message`n"
     
     Write-ColorText "EXAMPLES:" -Color $ColorScheme.Highlight
-    Write-ColorText "  # Basic training" -Color $ColorScheme.Dim
+    Write-ColorText "  # Basic training with optimized config" -Color $ColorScheme.Dim
     Write-ColorText "  .\train.ps1`n" -Color $ColorScheme.Info
     
     Write-ColorText "  # Custom training" -Color $ColorScheme.Dim
@@ -175,6 +178,14 @@ function Show-Help {
     
     Write-ColorText "  # Debug mode" -Color $ColorScheme.Dim
     Write-ColorText "  .\train.ps1 -Debug -Timesteps 1000`n" -Color $ColorScheme.Info
+    
+    Write-Host ""
+    Write-ColorText "NOTE: " -Color $ColorScheme.Highlight -NoNewline
+    Write-ColorText "v2.0.0 uses optimized config by default with:" -Color $ColorScheme.Info
+    Write-ColorText "  - Dynamic GAE lambda and entropy annealing" -Color $ColorScheme.Dim
+    Write-ColorText "  - Learning rate scheduling and clip range decay" -Color $ColorScheme.Dim
+    Write-ColorText "  - Reward normalization and progressive shaping" -Color $ColorScheme.Dim
+    Write-ColorText "  - Automatic curriculum transitions`n" -Color $ColorScheme.Dim
     
     exit 0
 }
@@ -184,9 +195,15 @@ if ($Help) {
     Show-Help
 }
 
+# Set UTF-8 encoding for console output and file operations
+# This prevents encoding errors with YAML files
+$OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$PSDefaultParameterValues['*:Encoding'] = 'utf8'
+
 # Display header
 Clear-Host
-Write-Header "RL-Bot Training Launcher v1.0.0"
+Write-Header "RL-Bot Training Launcher v2.0.0 - Optimized Edition"
 
 # Check Python installation
 Write-Step "Checking Python installation..." "INFO"

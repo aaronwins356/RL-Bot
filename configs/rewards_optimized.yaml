@@ -1,0 +1,238 @@
+# Optimized reward shaping configuration for RL-Bot
+# Designed to address reward plateau and improve learning signal
+
+# Progressive reward complexity - start with sparse, add dense gradually
+# This helps the agent learn basic behaviors before complex ones
+
+# SPARSE REWARDS - High magnitude, clear signals
+sparse:
+  # Primary objectives (highest rewards)
+  goal_scored: 100.0  # Increased from 10.0 for stronger signal
+  goal_conceded: -50.0  # Less punishing than goal reward
+  
+  # Secondary objectives
+  shot_on_goal: 5.0  # Increased from 2.0
+  save: 10.0  # Increased from 3.0
+  assist: 15.0  # New - reward team play
+  
+  # Mechanical milestones
+  epic_save: 20.0  # New - reward great saves
+  demo: 2.0  # Increased from 1.0
+  demoed: -2.0  # Increased penalty from -1.0
+
+# DENSE REWARDS - Ball interaction (scaled down to avoid overwhelming sparse)
+ball:
+  touch_ball: 0.5  # Increased from 0.1 - more encouragement
+  velocity_toward_ball: 0.02  # Reduced from 0.05 - less micromanagement
+  distance_to_ball_change: 0.005  # Reduced from 0.01
+  ball_height_control: 0.05  # Reduced from 0.1
+  ball_velocity_toward_goal: 1.0  # Increased from 0.2 - reward offensive play
+  
+  # New - Punish excessive ball chasing
+  ball_chase_penalty: -0.1  # Penalty for always going for ball
+
+# DENSE REWARDS - Goal-oriented behavior
+goal:
+  velocity_toward_enemy_goal: 0.05  # Reduced from 0.1
+  velocity_toward_own_goal: -0.05  # Less punishing
+  ball_velocity_toward_enemy_goal: 0.5  # Increased from 0.2
+  shot_quality: 1.0  # Increased from 0.5
+  
+  # New - Clear/centering rewards
+  clear_ball: 1.0  # Reward defensive clears
+  center_ball: 0.5  # Reward offensive centers
+
+# DENSE REWARDS - Positioning (reduced to prevent over-optimization)
+positioning:
+  optimal_position_reward: 0.02  # Reduced from 0.05
+  rotation_discipline: 0.03  # Reduced from 0.05
+  good_rotation: 0.05  # Reduced from 0.1
+  spacing_from_teammates: 0.01  # Reduced from 0.03
+  defensive_positioning: 0.02  # Reduced from 0.05
+  offensive_positioning: 0.01  # Reduced from 0.03
+  midfield_control: 0.01  # Reduced from 0.02
+  field_coverage: 0.02  # Reduced from 0.04
+  
+  # Penalties (important to prevent bad habits)
+  stale_positioning: -0.3  # Increased from -0.15 - punish camping
+  spacing_quality: 0.02  # Reduced from 0.05
+  goal_line_defense: 0.05  # Reduced from 0.1
+  shadow_defense_reward: 0.04  # Reduced from 0.08
+
+# DENSE REWARDS - Boost management (simplified)
+boost:
+  pickup_small_pad: 0.02  # Reduced from 0.05
+  pickup_large_pad: 0.1  # Reduced from 0.15
+  boost_efficiency: 0.01  # Reduced from 0.02
+  boost_starve_opponent: 0.05  # Reduced from 0.1
+  boost_conservation: 0.005  # Reduced from 0.01
+  boost_pickup: 0.03  # Reduced from 0.1
+  
+  # Penalties
+  boost_waste: -0.05  # Increased from -0.02 - punish waste
+  boost_economy: 0.01  # Reduced from 0.03
+  pad_route_efficiency: 0.02  # Reduced from 0.05
+
+# PENALTIES - Bad behaviors (keep these strong)
+penalties:
+  double_commit: -1.0  # Increased from -0.5
+  overcommit: -0.5  # Increased from -0.3
+  boost_waste_penalty: -0.05  # Increased from -0.02
+  own_goal: -100.0  # Increased from -15.0 to match goal_scored
+  own_goal_risk: -1.0  # Increased from -0.5
+  miss_easy_save: -5.0  # Increased from -2.0
+  whiff: -0.5  # Increased from -0.2
+  missed_aerial_opportunity: -0.5  # Increased from -0.3
+  boost_starve: -0.2  # Increased from -0.1
+  
+  # Mechanical failures
+  bad_recovery: -0.2  # Increased from -0.1
+  flip_cancel_fail: -0.1  # Increased from -0.05
+  
+  # New - Prevent spam behaviors
+  flip_spam: -0.3  # Penalty for excessive flipping
+  idle_penalty: -0.1  # Penalty for not moving
+
+# AERIAL-SPECIFIC REWARDS (progressive - enable later in training)
+aerial:
+  aerial_touch_bonus: 2.0  # Increased from 0.5
+  aerial_goal: 15.0  # Increased from 5.0
+  aerial_save: 12.0  # Increased from 4.0
+  aerial_shot: 3.0  # Increased from 1.0
+  aerial_positioning: 0.1  # Keep same
+  missed_aerial: -1.0  # Increased from -0.3
+  aerial_efficiency: 0.5  # Increased from 0.2
+  air_control_bonus: 0.3  # Increased from 0.15
+  aerial_redirect: 2.0  # Increased from 0.8
+  wall_read: 1.0  # Increased from 0.4
+  missed_aerial_with_open_net: -3.0  # Increased from -0.8
+  
+  # New aerial rewards
+  fast_aerial: 0.5  # Bonus for fast aerial takeoff
+  double_jump_aerial: 0.3  # Bonus for double jump aerials
+  ceiling_shot: 5.0  # Bonus for ceiling shots
+
+# ADVANCED MECHANICS (enable in later stages)
+mechanics:
+  # Ground mechanics
+  speedflip_success: 1.0  # Increased from 0.2
+  wavedash_success: 0.5  # Increased from 0.1
+  halfflip_success: 0.5  # Increased from 0.1
+  powerslide: 0.1  # New - reward powersliding
+  
+  # Air mechanics
+  fast_aerial_success: 1.0  # Increased from 0.15
+  air_roll_shot: 1.5  # New - reward air roll shots
+  flip_reset: 3.0  # New - reward flip resets
+  
+  # Wall mechanics
+  wall_touch: 0.5  # New - reward wall play
+  wall_shot: 2.0  # New - reward wall shots
+  wall_aerial: 2.5  # New - reward wall aerials
+  
+  # Bumping and demoing
+  demo_opponent: 3.0  # Increased from 1.0
+  bump_opponent: 0.5  # New - reward bumps
+  
+  # Flicks and dribbling
+  flick: 2.0  # New - reward flicks
+  dribble: 0.5  # New - reward dribbling (per tick)
+  ground_shot: 1.0  # New - reward ground shots
+
+# CONTEXT-DEPENDENT MULTIPLIERS
+# These scale rewards based on game situation
+multipliers:
+  kickoff_win: 2.0  # Increased from 1.5
+  overtime: 1.5  # Increased from 1.2
+  close_game: 1.3  # Increased from 1.1
+  losing: 1.2  # Increased from 1.05
+  touch_when_last_man: 2.0  # Increased from 1.3
+  
+  # New multipliers
+  winning: 0.8  # Reduce rewards when winning (encourage conservative play)
+  low_boost: 1.2  # Increase rewards for good plays with low boost
+
+# TEAM PLAY REWARDS (2v2, 3v3)
+teamplay:
+  passing: 1.5  # Increased from 0.3
+  assist: 15.0  # Matches sparse.assist
+  rotation: 0.1  # Increased from 0.05
+  
+  # New team play rewards
+  good_spacing: 0.1  # Reward maintaining spacing
+  supporting_teammate: 0.05  # Reward being in support position
+  fake_challenge: 0.5  # Reward fake challenges
+  boost_stealing: 0.3  # Reward stealing opponent boost
+
+# TIME-BASED REWARDS (encourage active play)
+time_based:
+  possession_time: 0.02  # Increased from 0.01 per second
+  time_in_attacking_third: 0.01  # Increased from 0.005
+  time_in_defensive_third: -0.005  # Increased penalty from -0.002
+  
+  # New time-based
+  time_supersonic: 0.005  # Reward speed
+  time_grounded: -0.01  # Penalty for staying on ground (encourage aerials)
+
+# NORMALIZATION SETTINGS
+normalization:
+  # Enable normalization to prevent reward explosion
+  use_normalization: true
+  
+  # Clip rewards to prevent extreme values
+  clip_rewards: true
+  clip_range: [-20.0, 20.0]  # Tighter than before (was [-10, 10])
+  
+  # Running standardization
+  use_running_stats: true  # Track mean/std over time
+  stats_window: 10000  # Track last 10k rewards
+  
+  # Reward scaling
+  scale_by_episode_length: false  # Don't scale by length
+  scale_by_timestep: false  # Don't scale by timestep
+
+# PROGRESSIVE REWARD SCHEDULES
+# Define when to enable different reward components
+schedules:
+  # Sparse rewards - always on
+  sparse_rewards:
+    enabled_at_timestep: 0
+    weight_multiplier: 1.0
+  
+  # Basic dense rewards - enable early
+  basic_dense_rewards:
+    enabled_at_timestep: 0
+    weight_multiplier: 0.5  # Start at 50%
+    ramp_to: 1.0  # Increase to 100%
+    ramp_duration: 200000  # Over 200k timesteps
+  
+  # Positioning rewards - enable after basics
+  positioning_rewards:
+    enabled_at_timestep: 100000
+    weight_multiplier: 0.0  # Start disabled
+    ramp_to: 1.0
+    ramp_duration: 300000
+  
+  # Aerial rewards - enable after positioning
+  aerial_rewards:
+    enabled_at_timestep: 300000
+    weight_multiplier: 0.0
+    ramp_to: 1.0
+    ramp_duration: 500000
+  
+  # Advanced mechanics - enable late
+  advanced_mechanics:
+    enabled_at_timestep: 500000
+    weight_multiplier: 0.0
+    ramp_to: 1.0
+    ramp_duration: 500000
+
+# REWARD DEBUGGING
+debug:
+  # Log individual reward components
+  log_components: false  # Set to true for debugging
+  log_frequency: 100  # Log every N steps
+  
+  # Reward component tracking
+  track_top_rewards: true  # Track which rewards fire most
+  track_reward_distribution: true  # Track reward distribution
