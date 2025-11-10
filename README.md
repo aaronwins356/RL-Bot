@@ -1,11 +1,17 @@
-# RL-Bot - Modern Rocket League AI
+# 🚀 RL-Bot - Next-Generation Rocket League AI
 
-A clean, modular reinforcement learning bot for Rocket League built with modern ML libraries (rlgym >= 2.0.1, gymnasium, PyTorch >= 2.2).
+A comprehensive reinforcement learning bot system for Rocket League featuring:
+- **Modern PPO Implementation** with advanced optimizations
+- **RocketMind System** - Next-gen PPO bot with Streamlit dashboard
+- **RLBot Integration** - Full compatibility with RLBot Framework and GUI
+- **Interactive Dashboard** - Real-time visualization and control
+- **Modular Architecture** - Easy to extend and customize
 
-This is a complete rebuild focused on simplicity, maintainability, and ease of extension.
+Built with modern ML libraries (rlgym >= 2.0.1, gymnasium, PyTorch >= 2.2).
 
 ## 🎯 Features
 
+### Core RL-Bot System
 - **Simple PPO Implementation**: Clean, readable PPO training loop
 - **Modular Behavior System**: Hardcoded kickoff, recovery, and boost management behaviors
 - **Ball Prediction**: Physics-based ball trajectory prediction for aerials and positioning
@@ -20,8 +26,47 @@ This is a complete rebuild focused on simplicity, maintainability, and ease of e
 - **Vectorized Training**: Parallel environments for faster training
 - **RLBot Compatible**: Deploy trained agents in actual Rocket League matches
 
+### 🚀 RocketMind System (New!)
+Next-generation PPO bot with cutting-edge features:
+
+**Advanced PPO:**
+- Automatic Mixed Precision (AMP) training
+- torch.compile() optimization (PyTorch 2.x)
+- Optional LSTM for temporal awareness
+- Adaptive learning rate and entropy scheduling
+- GAE (Generalized Advantage Estimation)
+- Gradient clipping and normalization
+
+**🎮 RLBot Integration:**
+- Full RLBot Framework compatibility
+- RLBot GUI launcher support
+- State parsing from GameTickPacket
+- Action-to-controller conversion
+- Bot configuration generation
+- Deploy trained models to live matches
+
+**📊 Streamlit Dashboard:**
+- Interactive web interface (http://localhost:8501)
+- Real-time training metrics (reward, loss, KL divergence)
+- Live telemetry (ball speed, boost, positioning)
+- Hyperparameter editor with live updates
+- Performance monitoring (GPU, FPS, throughput)
+- Skill progression visualization
+- Bot control panel (train/evaluate/spectate)
+- Auto-refresh during training
+
+**✨ Advanced Features:**
+- Replay recording and playback
+- Field heatmap generation
+- WebSocket streaming for external integrations
+- Discord webhook notifications
+- Curriculum learning support
+- Distributed training ready
+- Adaptive reward sculpting
+
 ## 📁 Project Structure
 
+### Core RL-Bot (`rl_bot/`)
 ```
 rl_bot/
 ├── core/
@@ -35,15 +80,39 @@ rl_bot/
 │   └── utils.py               # Logging, device management, checkpointing
 ├── train.py                   # PPO training loop
 ├── eval.py                    # Evaluation and Elo tracking
-├── main.py                    # Entry point
-├── run_bot.py                 # RLBot deployment wrapper
-├── config.yaml                # Training configuration
-└── requirements.txt           # Dependencies
+└── main.py                    # Entry point
+```
+
+### RocketMind System (`rocketmind/`)
+```
+rocketmind/
+├── main.py                    # CLI entry point
+├── train.py                   # Training script
+├── streamlit_app.py           # Interactive dashboard
+├── configs/
+│   └── default.yaml           # Configuration
+├── ppo_core/                  # Advanced PPO implementation
+│   ├── network.py             # Actor-Critic with LSTM support
+│   ├── memory.py              # Rollout and replay buffers
+│   ├── trainer.py             # PPO trainer with AMP
+│   ├── losses.py              # Loss functions
+│   └── utils.py               # Utilities and schedules
+├── rlbot_interface/           # RLBot integration layer
+│   ├── rocket_agent.py        # Main RLBot agent
+│   ├── rlbot_adapter.py       # RLBot adapter
+│   ├── state_parser.py        # State parsing
+│   └── reward_functions.py    # Reward components
+├── visualization/             # Visualization tools
+│   ├── replay_viewer.py       # Replay playback
+│   ├── telemetry_dashboard.py # Live telemetry
+│   └── rocket_stream.py       # WebSocket streaming
+└── tests/
+    └── test_ppo.py            # Unit tests
 ```
 
 ## 🚀 Quick Start
 
-### 1. Installation
+### Installation
 
 ```bash
 # Clone the repository
@@ -58,8 +127,42 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Start Training
+## Usage Options
 
+### Option 1: RocketMind System (Recommended - New!)
+
+**Start with Streamlit Dashboard:**
+```bash
+# Launch interactive dashboard
+python -m rocketmind.main dashboard
+# Opens at http://localhost:8501
+
+# Use dashboard to:
+# - Start/stop training
+# - Monitor metrics in real-time
+# - Adjust hyperparameters
+# - View telemetry
+# - Launch in RLBot GUI
+```
+
+**Or use CLI:**
+```bash
+# Start training
+python -m rocketmind.main train
+
+# Train with custom config
+python -m rocketmind.main train --config rocketmind/configs/custom.yaml
+
+# Resume from checkpoint
+python -m rocketmind.main train --resume checkpoints/rocketmind/checkpoint_1000000.pt
+
+# Deploy to RLBot
+python -m rocketmind.main deploy --checkpoint checkpoints/rocketmind/best_model.pt
+```
+
+### Option 2: Core RL-Bot System
+
+**Start Training:**
 ```bash
 # Train with default settings
 python main.py
@@ -71,30 +174,18 @@ python main.py --timesteps 5000000 --device cuda --num-envs 8
 python main.py --resume checkpoints/checkpoint_1000000.pt
 ```
 
-### 3. Monitor Training
+### Monitor Training
 
+**TensorBoard:**
 ```bash
-# Launch TensorBoard
 tensorboard --logdir logs
-
 # Open in browser: http://localhost:6006
 ```
 
-### 4. Evaluate Performance
-
+**Streamlit Dashboard (RocketMind):**
 ```bash
-# Run evaluation script (after training)
-python -c "
-from rl_bot.core.utils import load_config, get_device
-from rl_bot.core.env_setup import make_vec_env
-from rl_bot.eval import evaluate_checkpoint
-
-config = load_config('config.yaml')
-env = make_vec_env(config, num_envs=1)
-metrics = evaluate_checkpoint('checkpoints/best_model.pt', env, config, num_episodes=20, plot_elo=True, save_dir='results')
-print(f'Win Rate: {metrics[\"win_rate\"]:.1%}')
-print(f'Elo Rating: {metrics[\"elo_rating\"]:.0f}')
-"
+python -m rocketmind.main dashboard
+# Auto-refreshes during training
 ```
 
 ## ⚙️ Configuration
@@ -363,14 +454,75 @@ checkpoints = [
 results = compare_checkpoints(checkpoints, env, config, num_episodes=20, save_dir='comparison')
 ```
 
+## 🎨 RocketMind Dashboard Features
+
+The Streamlit dashboard (`python -m rocketmind.main dashboard`) provides:
+
+### Training Tab
+- **Real-time Metrics**: Reward curves, loss plots, KL divergence
+- **Episode Statistics**: Win rate, mean reward, episode length
+- **Live Graphs**: Auto-updating charts with Plotly
+
+### Performance Tab
+- **GPU Monitoring**: Utilization, memory usage
+- **Training Throughput**: FPS, samples/sec, update time
+- **Efficiency Metrics**: Rollout speed, batch processing time
+
+### Skills Tab
+- **Radar Chart**: Visual skill progression tracking
+- **Skill Categories**: Aerials, dribbling, shooting, defense, positioning, boost management
+- **Historical Tracking**: See improvement over time
+
+### Control Panel (Sidebar)
+- **Mode Selection**: Train, Evaluate, Spectate, Configure
+- **Training Controls**: Start/pause/resume training
+- **RLBot Integration**: Launch bot in RLBot GUI
+- **Model Management**: Load/save checkpoints
+
+### Configuration Tab
+- **Live Hyperparameter Editing**: Adjust learning rate, clip range, entropy
+- **Reward Weight Tuning**: Modify reward function weights in real-time
+- **Network Architecture**: Change hidden sizes, activation functions
+- **Apply Changes**: Updates take effect on next training update
+
+## 🔧 RocketMind Configuration
+
+Edit `rocketmind/configs/default.yaml` for advanced options:
+
+```yaml
+training:
+  use_amp: true              # Automatic mixed precision
+  use_adaptive_lr: true      # Adaptive learning rate
+  
+network:
+  use_lstm: false            # Enable LSTM for temporal awareness
+  use_torch_compile: true    # PyTorch 2.x optimization
+  
+rewards:
+  adaptive_rewards: true     # Adaptive reward sculpting
+  
+dashboard:
+  enabled: true
+  port: 8501
+  enable_wandb: false        # Weights & Biases integration
+  
+curriculum:
+  enabled: false             # Curriculum learning
+  stages:                    # Define difficulty progression
+    - name: "basic"
+      timesteps: 2_000_000
+      opponent_skill: 0.3
+```
+
 ## 🤝 Contributing
 
 Contributions are welcome! Areas for improvement:
 - Additional reward components
 - Advanced training algorithms (SAC, TD3)
-- Curriculum learning
-- Self-play
-- RLBot framework integration
+- Curriculum learning enhancements
+- Self-play implementation
+- Enhanced RLBot integration
+- Dashboard features
 - Documentation improvements
 
 ## 📄 License
@@ -382,13 +534,17 @@ MIT License - See LICENSE file for details
 - [rlgym](https://github.com/lucas-emery/rocket-league-gym) - Rocket League Gym environment
 - [RLBot](https://github.com/RLBot/RLBot) - Rocket League bot framework
 - [PyTorch](https://pytorch.org/) - Deep learning framework
+- [Streamlit](https://streamlit.io/) - Interactive dashboard framework
 
 ## 📞 Support
 
 For issues and questions:
 - Open an issue on GitHub
 - Check existing issues for solutions
+- Review documentation in the repository
 
 ---
 
-**Happy Training! 🚗⚽**
+**Train smart. Play hard. Score goals.** 🚗⚽
+
+*Built with ❤️ for the Rocket League AI community*
