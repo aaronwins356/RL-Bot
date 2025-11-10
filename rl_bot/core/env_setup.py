@@ -302,17 +302,25 @@ class VectorizedEnv:
         infos = []
         
         for i, env in enumerate(self.envs):
-            # RLGym 2.0 expects dict of actions {agent_id: action}
+            # RLGym 2.0 expects dict of actions {agent_id: action} for ALL agents
             agent_ids = list(env.agents)
-            action_dict = {agent_ids[0]: actions[i]}  # Single agent for now
+            # For single agent training, use first agent's action for blue team
+            # and a no-op for orange team (opponents)
+            action_dict = {}
+            for j, agent_id in enumerate(agent_ids):
+                if j == 0:  # First agent (blue team) - controlled by our policy
+                    action_dict[agent_id] = np.array([actions[i]])
+                else:  # Other agents (opponents) - use no-op action
+                    action_dict[agent_id] = np.array([0])
             
             obs_dict, reward_dict, terminated_dict, truncated_dict = env.step(action_dict)
             
-            # Extract first agent's data
-            obs = list(obs_dict.values())[0]
-            reward = list(reward_dict.values())[0]
-            terminated = list(terminated_dict.values())[0]
-            truncated = list(truncated_dict.values())[0]
+            # Extract first agent's data (blue team)
+            first_agent = agent_ids[0]
+            obs = obs_dict[first_agent]
+            reward = reward_dict[first_agent]
+            terminated = terminated_dict[first_agent]
+            truncated = truncated_dict[first_agent]
             
             observations.append(obs)
             rewards.append(reward)
@@ -362,8 +370,14 @@ def make_vec_env(config: Dict[str, Any], num_envs: int = 4) -> VectorizedEnv:
     
     # Get observation and action dimensions from a temporary environment
     temp_env = make_env()
-    obs_dim = temp_env.observation_space.shape[0]
-    action_dim = temp_env.action_space.n
+    # Reset to initialize agents
+    temp_env.reset()
+    # RLGym 2.0 has observation_space and action_space as methods that return (type, size) tuples
+    first_agent = list(temp_env.agents)[0]
+    obs_space_tuple = temp_env.observation_space(first_agent)  # ('real', size)
+    action_space_tuple = temp_env.action_space(first_agent)  # ('discrete', size)
+    obs_dim = obs_space_tuple[1]
+    action_dim = action_space_tuple[1]
     temp_env.close()
     
     vec_env = VectorizedEnv(env_fns, obs_dim, action_dim)
