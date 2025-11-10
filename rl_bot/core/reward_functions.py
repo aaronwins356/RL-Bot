@@ -5,8 +5,14 @@ Each component calculates a specific aspect of the reward signal.
 
 import numpy as np
 from typing import Dict, Any, List
-from rlgym.rocket_league.api import GameState, Car
-from rlgym.api import RewardFunction
+
+# Try modern import first, then fallback to compatibility shim
+try:
+    from rlgym_rocket_league.rocket_league.api import GameState, Car
+    from rlgym_rocket_league.api import RewardFunction
+except ImportError:
+    from rlgym.rocket_league.api import GameState, Car
+    from rlgym.api import RewardFunction
 
 # For compatibility with old code, alias Car as PlayerData
 PlayerData = Car

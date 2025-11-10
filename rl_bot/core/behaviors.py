@@ -7,7 +7,12 @@ that can override or guide the learned policy.
 import numpy as np
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
-from rlgym.rocket_league.api import GameState, Car
+
+# Try modern import first, then fallback to compatibility shim
+try:
+    from rlgym_rocket_league.rocket_league.api import GameState, Car
+except ImportError:
+    from rlgym.rocket_league.api import GameState, Car
 
 # For compatibility with old code, alias Car as PlayerData  
 PlayerData = Car
