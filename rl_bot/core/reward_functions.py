@@ -5,8 +5,11 @@ Each component calculates a specific aspect of the reward signal.
 
 import numpy as np
 from typing import Dict, Any, List
-from rlgym_sim.utils.gamestates import GameState, PlayerData
-from rlgym_sim.utils.reward_functions import RewardFunction
+from rlgym.rocket_league.api import GameState, Car
+from rlgym.api import RewardFunction
+
+# For compatibility with old code, alias Car as PlayerData
+PlayerData = Car
 
 
 class CombinedReward(RewardFunction):

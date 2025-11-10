@@ -1,5 +1,5 @@
 """
-Rocket League Gym environment setup using rlgym.
+Rocket League Gym environment setup using rlgym.rocket_league 2.0+.
 Creates and configures the RL training environment.
 """
 
@@ -8,16 +8,44 @@ from typing import Dict, Any, Optional
 import gymnasium as gym
 from gymnasium import spaces
 
-from rlgym_sim.envs import RLGymSimEnv
-from rlgym_sim.utils.state_setters import DefaultState
-from rlgym_sim.utils.obs_builders import ObsBuilder
-from rlgym_sim.utils.action_parsers import ActionParser
-from rlgym_sim.utils.terminal_conditions.common_conditions import (
-    TimeoutCondition, GoalScoredCondition
-)
-from rlgym_sim.utils.reward_functions import CombinedReward
+# New RLGym 2.0+ API imports
+from rlgym.api import RLGym
+from rlgym.rocket_league.action_parsers import LookupTableAction, RepeatAction
+from rlgym.rocket_league.done_conditions import GoalCondition, NoTouchTimeoutCondition, TimeoutCondition, AnyCondition
+from rlgym.rocket_league.obs_builders import DefaultObs
+from rlgym.rocket_league.reward_functions import CombinedReward, GoalReward, TouchReward
+from rlgym.rocket_league.sim import RocketSimEngine
+from rlgym.rocket_league.state_mutators import MutatorSequence, FixedTeamSizeMutator, KickoffMutator
+from rlgym.rocket_league import common_values
 
-from rlgym_sim.utils.gamestates import GameState, PlayerData
+# Keep these for compatibility with custom reward functions and observers
+try:
+    from rlgym.rocket_league.api import GameState, Car
+    PlayerData = Car  # In RLGym 2.0, Car is used instead of PlayerData
+except ImportError:
+    # Fallback for different API versions
+    from rlgym.api import GameState
+    class PlayerData:
+        pass
+
+
+# Compatibility base classes for legacy code
+class ObsBuilder:
+    """Base class for custom observation builders - RLGym 2.0 compatible."""
+    def reset(self, initial_state):
+        pass
+    
+    def build_obs(self, player, state, previous_action):
+        raise NotImplementedError
+
+
+class ActionParser:
+    """Base class for custom action parsers - RLGym 2.0 compatible."""
+    def get_action_space(self):
+        raise NotImplementedError
+    
+    def parse_actions(self, actions, state):
+        raise NotImplementedError
 
 
 class SimpleObsBuilder(ObsBuilder):
@@ -150,69 +178,71 @@ def create_rlgym_env(
     tick_skip: int = 8,
     timeout_seconds: int = 300,
     spawn_opponents: bool = True
-) -> gym.Env:
+) -> RLGym:
     """
-    Create a Rocket League Gym environment with specified configuration.
+    Create a Rocket League Gym environment with specified configuration using RLGym 2.0+ API.
     
     Args:
         config: Configuration dictionary
         reward_fn: Reward function (if None, creates default)
         team_size: Number of players per team
-        tick_skip: Physics ticks to skip per action
+        tick_skip: Physics ticks to skip per action (action repeat)
         timeout_seconds: Episode timeout in seconds
         spawn_opponents: Whether to spawn opponent bots
         
     Returns:
-        Configured RL environment
+        Configured RL environment (RLGym 2.0)
     """
     env_config = config.get('environment', {})
     
-    # Create observation builder based on config
-    obs_builder_type = env_config.get('obs_builder', 'simple')
-    include_predictions = env_config.get('include_predictions', True)
+    # Team sizes
+    blue_team_size = team_size
+    orange_team_size = team_size if spawn_opponents else 0
     
-    if obs_builder_type == 'team_aware':
-        from rl_bot.core.advanced_obs import TeamAwareObsBuilder
-        max_team_size = env_config.get('max_team_size', 3)
-        obs_builder = TeamAwareObsBuilder(
-            max_team_size=max_team_size,
-            include_predictions=include_predictions,
-            num_predictions=5
-        )
-    elif obs_builder_type == 'compact':
-        from rl_bot.core.advanced_obs import CompactObsBuilder
-        obs_builder = CompactObsBuilder(include_predictions=include_predictions)
-    else:
-        # Default simple obs builder
-        obs_builder = SimpleObsBuilder()
+    # Action parser with repeat
+    action_parser = RepeatAction(LookupTableAction(), repeats=tick_skip)
     
-    # Create action parser
-    action_parser = DiscreteActionParser()
+    # Terminal and truncation conditions
+    termination_condition = GoalCondition()
+    no_touch_timeout = env_config.get('no_touch_timeout_seconds', 30)
+    truncation_condition = AnyCondition(
+        NoTouchTimeoutCondition(timeout_seconds=no_touch_timeout),
+        TimeoutCondition(timeout_seconds=timeout_seconds)
+    )
     
     # Create reward function if not provided
     if reward_fn is None:
-        from rl_bot.core.reward_functions import create_reward_function
-        reward_fn = create_reward_function(config)
+        # Simple default reward
+        reward_fn = CombinedReward(
+            (GoalReward(), 10.0),
+            (TouchReward(), 0.1)
+        )
     
-    # Create terminal conditions
-    terminal_conditions = [
-        TimeoutCondition(timeout_seconds * 120 // tick_skip),  # 120 ticks per second
-        GoalScoredCondition(),
-    ]
+    # Observation builder
+    obs_builder = DefaultObs(
+        zero_padding=None,
+        pos_coef=np.asarray([1 / common_values.SIDE_WALL_X, 1 / common_values.BACK_NET_Y, 1 / common_values.CEILING_Z]),
+        ang_coef=1 / np.pi,
+        lin_vel_coef=1 / common_values.CAR_MAX_SPEED,
+        ang_vel_coef=1 / common_values.CAR_MAX_ANG_VEL,
+        boost_coef=1 / 100.0,
+    )
     
-    # Create state setter (spawning configuration)
-    state_setter = DefaultState()
+    # State mutators (for resetting environment state)
+    state_mutator = MutatorSequence(
+        FixedTeamSizeMutator(blue_size=blue_team_size, orange_size=orange_team_size),
+        KickoffMutator()
+    )
     
-    # Create environment
-    env = RLGymSimEnv(
-        tick_skip=tick_skip,
-        team_size=team_size,
-        spawn_opponents=spawn_opponents,
+    # Create environment using new RLGym 2.0 API
+    env = RLGym(
+        state_mutator=state_mutator,
         obs_builder=obs_builder,
         action_parser=action_parser,
         reward_fn=reward_fn,
-        terminal_conditions=terminal_conditions,
-        state_setter=state_setter
+        termination_cond=termination_condition,
+        truncation_cond=truncation_condition,
+        transition_engine=RocketSimEngine()
     )
     
     return env
@@ -245,10 +275,13 @@ class VectorizedEnv:
         """Reset all environments."""
         observations = []
         for env in self.envs:
-            obs, _ = env.reset()
-            # Handle both single and multi-agent obs
-            if isinstance(obs, (list, tuple)):
-                obs = obs[0]  # Take first agent
+            obs_dict = env.reset()
+            # RLGym 2.0 returns dict of observations {agent_id: obs}
+            if isinstance(obs_dict, dict):
+                # Get first agent's observation
+                obs = list(obs_dict.values())[0]
+            else:
+                obs = obs_dict
             observations.append(obs)
         return np.array(observations, dtype=np.float32), {}
     
@@ -260,7 +293,7 @@ class VectorizedEnv:
             actions: Array of actions for each environment
             
         Returns:
-            observations, rewards, dones, truncated, infos
+            observations, rewards, terminateds, truncateds, infos
         """
         observations = []
         rewards = []
@@ -269,23 +302,31 @@ class VectorizedEnv:
         infos = []
         
         for i, env in enumerate(self.envs):
-            obs, reward, terminated, truncated, info = env.step(actions[i])
+            # RLGym 2.0 expects dict of actions {agent_id: action} for ALL agents
+            agent_ids = list(env.agents)
+            # For single agent training, use first agent's action for blue team
+            # and a no-op for orange team (opponents)
+            action_dict = {}
+            for j, agent_id in enumerate(agent_ids):
+                if j == 0:  # First agent (blue team) - controlled by our policy
+                    action_dict[agent_id] = np.array([actions[i]])
+                else:  # Other agents (opponents) - use no-op action
+                    action_dict[agent_id] = np.array([0])
             
-            # Handle multi-agent environments
-            if isinstance(obs, (list, tuple)):
-                obs = obs[0]
-            if isinstance(reward, (list, tuple)):
-                reward = reward[0]
-            if isinstance(terminated, (list, tuple)):
-                terminated = terminated[0]
-            if isinstance(truncated, (list, tuple)):
-                truncated = truncated[0]
+            obs_dict, reward_dict, terminated_dict, truncated_dict = env.step(action_dict)
+            
+            # Extract first agent's data (blue team)
+            first_agent = agent_ids[0]
+            obs = obs_dict[first_agent]
+            reward = reward_dict[first_agent]
+            terminated = terminated_dict[first_agent]
+            truncated = truncated_dict[first_agent]
             
             observations.append(obs)
             rewards.append(reward)
             terminateds.append(terminated)
             truncateds.append(truncated)
-            infos.append(info if isinstance(info, dict) else {})
+            infos.append({})
         
         return (
             np.array(observations, dtype=np.float32),
@@ -329,8 +370,14 @@ def make_vec_env(config: Dict[str, Any], num_envs: int = 4) -> VectorizedEnv:
     
     # Get observation and action dimensions from a temporary environment
     temp_env = make_env()
-    obs_dim = temp_env.observation_space.shape[0]
-    action_dim = temp_env.action_space.n
+    # Reset to initialize agents
+    temp_env.reset()
+    # RLGym 2.0 has observation_space and action_space as methods that return (type, size) tuples
+    first_agent = list(temp_env.agents)[0]
+    obs_space_tuple = temp_env.observation_space(first_agent)  # ('real', size)
+    action_space_tuple = temp_env.action_space(first_agent)  # ('discrete', size)
+    obs_dim = obs_space_tuple[1]
+    action_dim = action_space_tuple[1]
     temp_env.close()
     
     vec_env = VectorizedEnv(env_fns, obs_dim, action_dim)

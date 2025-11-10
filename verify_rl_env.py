@@ -46,7 +46,7 @@ class EnvironmentVerifier:
             ('numpy', 'NumPy', True),
             
             # RLGym packages
-            ('rlgym_rocket_league', 'RLGym-Rocket-League', True),
+            ('rlgym.rocket_league', 'RLGym-Rocket-League', True),
             ('rlgym_tools', 'RLGym-Tools', False),
             
             # Optional packages
@@ -140,15 +140,15 @@ class EnvironmentVerifier:
         self.print_header("STEP 3: Testing Environment Creation")
         
         try:
-            import rlgym_rocket_league
-            from rlgym_rocket_league.utils import StateSetter, RewardFunction, ObsBuilder
+            import rlgym.rocket_league
+            from rlgym.rocket_league.utils import StateSetter, RewardFunction, ObsBuilder
             import numpy as np
             
             self.print_status('info', "Creating RLGym-Rocket-League environment...")
             
             # Try to create environment with default settings
             try:
-                env = rlgym_rocket_league.make(
+                env = rlgym.rocket_league.make(
                     team_size=1,
                     tick_skip=8,
                     spawn_opponents=True,
@@ -173,7 +173,7 @@ class EnvironmentVerifier:
                 return False, None
                 
         except ImportError as e:
-            self.print_status('error', f"Cannot import rlgym_rocket_league: {e}")
+            self.print_status('error', f"Cannot import rlgym.rocket_league: {e}")
             self.checks_failed.append("RLGym import")
             return False, None
     

@@ -5,8 +5,11 @@ Extends the base observation with teammate/opponent info and predictions.
 
 import numpy as np
 from typing import Optional
-from rlgym_sim.utils.obs_builders import ObsBuilder
-from rlgym_sim.utils.gamestates import GameState, PlayerData
+from rlgym.api import ObsBuilder
+from rlgym.rocket_league.api import GameState, Car
+
+# For compatibility with old code, alias Car as PlayerData
+PlayerData = Car
 
 from rl_bot.core.ball_prediction import SimpleBallPredictor, PredictionFeatureExtractor
 
