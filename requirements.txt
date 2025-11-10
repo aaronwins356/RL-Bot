@@ -6,6 +6,7 @@ gymnasium>=0.29.0
 
 # RLBot compatibility (optional, for deployment)
 # rlgym-compat>=1.0.0  # Uncomment when deploying to RLBot
+# rlbot>=1.0.0  # Uncomment for RLBot GUI integration
 
 # Deep learning
 torch>=2.2.0
@@ -15,6 +16,10 @@ numpy>=1.24.0
 tensorboard>=2.14.0
 pyyaml>=6.0.1
 
+# Streamlit dashboard
+streamlit>=1.28.0
+plotly>=5.17.0
+
 # Utilities
 tqdm>=4.65.0
 matplotlib>=3.7.0
@@ -22,3 +27,12 @@ matplotlib>=3.7.0
 # Optional: For evaluation visualization
 seaborn>=0.12.0
 pandas>=2.0.0
+
+# Optional: WebSocket streaming
+# websockets>=12.0  # Uncomment for live telemetry streaming
+
+# Optional: Discord notifications
+# aiohttp>=3.9.0  # Uncomment for Discord webhook integration
+
+# Optional: Weights & Biases
+# wandb>=0.16.0  # Uncomment for W&B integration

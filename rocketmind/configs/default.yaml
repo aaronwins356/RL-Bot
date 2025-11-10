@@ -1,0 +1,116 @@
+# RocketMind PPO Configuration
+# Advanced configuration for next-generation Rocket League bot
+
+# PPO Training Parameters
+training:
+  total_timesteps: 10_000_000
+  batch_size: 4096
+  n_steps: 2048
+  n_epochs: 10
+  learning_rate: 3.0e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  use_adaptive_lr: true
+  lr_schedule: "linear"
+  use_amp: true  # Automatic mixed precision
+  
+# Network Architecture
+network:
+  hidden_sizes: [512, 512, 256]
+  activation: "relu"
+  use_layer_norm: false
+  orthogonal_init: true
+  use_lstm: false  # Optional recurrent policy
+  lstm_hidden_size: 256
+  use_torch_compile: true  # PyTorch 2.x optimization
+  
+# Environment Settings
+environment:
+  num_envs: 4
+  team_size: 1  # 1v1, 2v2, or 3v3
+  tick_skip: 8
+  timeout_seconds: 300
+  spawn_opponents: true
+  obs_builder: "advanced"  # simple, advanced, team_aware
+  include_predictions: true
+  domain_randomization: false
+  gravity_mult_range: [0.9, 1.1]
+  boost_spawn_rate_range: [0.8, 1.2]
+  
+# Reward Function Weights
+rewards:
+  # Sparse rewards
+  goal_scored: 10.0
+  goal_conceded: -10.0
+  save: 3.0
+  demo: 2.0
+  
+  # Dense rewards
+  ball_velocity_to_goal: 0.5
+  touch_ball: 0.5
+  touch_ball_aerial: 1.0
+  boost_pickup: 0.1
+  
+  # Advanced mechanics
+  aerial_goal: 5.0
+  flick_attempt: 0.3
+  dribbling_reward: 0.2
+  positioning_weight: 0.1
+  
+  # Adaptive reward sculpting
+  adaptive_rewards: true
+  reward_evolution_rate: 0.001
+  
+# RLBot Integration
+rlbot:
+  enabled: true
+  tick_skip: 8
+  auto_launch: true
+  bot_name: "RocketMind"
+  bot_description: "Next-gen PPO bot"
+  
+# Streamlit Dashboard
+dashboard:
+  enabled: true
+  port: 8501
+  update_interval: 1.0  # seconds
+  max_history: 1000
+  enable_wandb: false
+  wandb_project: "rocketmind"
+  
+# Logging and Checkpointing
+logging:
+  log_interval: 10
+  eval_interval: 100
+  save_interval: 500
+  tensorboard_dir: "logs/tensorboard"
+  checkpoint_dir: "checkpoints"
+  keep_best_only: false
+  
+# Performance Optimization
+performance:
+  num_workers: 4
+  distributed: false
+  multi_gpu: false
+  
+# Curriculum Learning
+curriculum:
+  enabled: false
+  stages:
+    - name: "basic"
+      timesteps: 2_000_000
+      opponent_skill: 0.3
+    - name: "intermediate"
+      timesteps: 5_000_000
+      opponent_skill: 0.6
+    - name: "advanced"
+      timesteps: 10_000_000
+      opponent_skill: 1.0
+      
+# Device and seed
+device: "auto"
+seed: 42
