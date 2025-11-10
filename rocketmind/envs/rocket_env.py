@@ -1,7 +1,7 @@
 """
 Rocket League Environment Wrapper for RocketMind.
 Provides enhanced environment with domain randomization, curriculum learning,
-and compatibility with both RLGym-Rocket-League and RLBot.
+and compatibility with both rlgym_rocket_league and RLBot.
 """
 
 import gymnasium as gym
@@ -10,11 +10,22 @@ from typing import Dict, Any, Optional, List, Tuple, Callable
 import warnings
 
 try:
-    import rlgym.rocket_league
+    import rlgym_rocket_league
     RLGYM_AVAILABLE = True
 except ImportError:
-    RLGYM_AVAILABLE = False
-    warnings.warn("rlgym.rocket_league not available - environment creation will fail")
+    # Try legacy compatibility shim
+    try:
+        import rlgym
+        rlgym_rocket_league = rlgym
+        RLGYM_AVAILABLE = True
+        warnings.warn(
+            "Using legacy rlgym compatibility shim. "
+            "Please install rlgym_rocket_league directly: pip install rlgym_rocket_league>=2.0.1",
+            DeprecationWarning
+        )
+    except ImportError:
+        RLGYM_AVAILABLE = False
+        warnings.warn("rlgym_rocket_league not available - environment creation will fail")
 
 
 class RocketLeagueEnv(gym.Env):
@@ -58,7 +69,7 @@ class RocketLeagueEnv(gym.Env):
         if not RLGYM_AVAILABLE:
             raise ImportError(
                 "rlgym_rocket_league is not installed. "
-                "Install with: pip install git+https://github.com/RLGym/rlgym-rocket-league.git"
+                "Install with: pip install rlgym_rocket_league>=2.0.1"
             )
         
         self.team_size = team_size
@@ -71,7 +82,7 @@ class RocketLeagueEnv(gym.Env):
         self.boost_spawn_rate_range = boost_spawn_rate_range
         
         # Create base environment
-        self.env = rlgym.rocket_league.make(
+        self.env = rlgym_rocket_league.make(
             team_size=team_size,
             tick_skip=tick_skip,
             spawn_opponents=spawn_opponents,
@@ -235,11 +246,11 @@ class LegacyRLGymShim:
         
         if not RLGYM_AVAILABLE:
             raise ImportError(
-                "rlgym.rocket_league is not installed. "
-                "Install with: pip install rlgym-rocket-league>=2.0.1"
+                "rlgym_rocket_league is not installed. "
+                "Install with: pip install rlgym_rocket_league>=2.0.1"
             )
         
-        return rlgym.rocket_league.make(*args, **kwargs)
+        return rlgym_rocket_league.make(*args, **kwargs)
 
 
 # Install legacy shim if someone tries to import old rlgym

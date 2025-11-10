@@ -6,7 +6,7 @@ numpy>=1.24.0,<2.0.0
 gymnasium>=0.29.0
 
 # RLGym-Rocket-League 2.0+ (unified API)
-rlgym-rocket-league>=2.0.1
+rlgym_rocket_league>=2.0.1
 rlgym-tools>=2.3.13
 
 # RLBot and RocketSim (for deployment)

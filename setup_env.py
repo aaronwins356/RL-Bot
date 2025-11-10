@@ -117,17 +117,20 @@ class EnvironmentSetup:
             self.install_package(dep)
     
     def install_rlgym_packages(self):
-        """Install RLGym-Rocket-League and related packages."""
-        self.print_header("STEP 3: Installing RLGym-Rocket-League")
+        """Install rlgym_rocket_league and related packages."""
+        self.print_header("STEP 3: Installing rlgym_rocket_league")
         
-        # Install from git repository
-        git_packages = [
-            "git+https://github.com/RLGym/rlgym-rocket-league.git",
-            "git+https://github.com/RLGym/rlgym-tools.git",
+        # Install the unified package
+        packages = [
+            "rlgym_rocket_league>=2.0.1",
+            "rlgym-tools>=2.3.13",
         ]
         
-        for package in git_packages:
+        for package in packages:
             self.install_package(package)
+        
+        # Create compatibility shims
+        self.create_compatibility_shims()
     
     def install_rlbot_packages(self):
         """Install RLBot and RocketSim."""
@@ -201,10 +204,12 @@ class EnvironmentSetup:
             ('torch', 'PyTorch'),
             ('gymnasium', 'Gymnasium'),
             ('numpy', 'NumPy'),
+            ('rlgym_rocket_league', 'RLGym-Rocket-League'),
         ]
         
         optional_imports = [
-            ('rlgym_rocket_league', 'RLGym-Rocket-League'),
+            ('rlgym', 'RLGym (legacy compatibility)'),
+            ('rlgym_sim', 'RLGym-Sim (legacy compatibility)'),
             ('rlgym_tools', 'RLGym-Tools'),
             ('streamlit', 'Streamlit'),
             ('plotly', 'Plotly'),
@@ -230,6 +235,56 @@ class EnvironmentSetup:
                 self.print_status('warning', f"{name} is NOT installed (optional)")
         
         return all_ok
+    
+    def create_compatibility_shims(self):
+        """Create compatibility shims for legacy rlgym imports."""
+        self.print_status('info', "Creating compatibility shims...")
+        
+        from pathlib import Path
+        
+        # Create rlgym shim
+        rlgym_shim = Path("rlgym/__init__.py")
+        rlgym_shim.parent.mkdir(exist_ok=True)
+        
+        rlgym_shim_content = '''"""
+Compatibility shim for legacy 'rlgym' imports.
+Redirects to 'rlgym_rocket_league' automatically.
+"""
+import sys, importlib, warnings
+warnings.warn("Using legacy rlgym compatibility shim. Please update to rlgym_rocket_league.", DeprecationWarning, stacklevel=2)
+try:
+    _rlgym_rl = importlib.import_module("rlgym_rocket_league")
+    sys.modules["rlgym"] = _rlgym_rl
+    globals().update(vars(_rlgym_rl))
+except ImportError as e:
+    raise ImportError("rlgym_rocket_league not installed. Install with: pip install rlgym_rocket_league>=2.0.1") from e
+'''
+        rlgym_shim.write_text(rlgym_shim_content)
+        self.print_status('success', "Created rlgym compatibility shim")
+        
+        # Create rlgym_sim shim
+        rlgym_sim_shim = Path("rlgym_sim/__init__.py")
+        rlgym_sim_shim.parent.mkdir(exist_ok=True)
+        
+        rlgym_sim_shim_content = '''"""
+Compatibility shim for legacy 'rlgym_sim' imports.
+Redirects to 'rlgym_rocket_league' automatically.
+"""
+import sys, importlib, types, warnings
+warnings.warn("Using legacy rlgym_sim compatibility shim. Please update to rlgym_rocket_league.", DeprecationWarning, stacklevel=2)
+try:
+    _rlgym_rl = importlib.import_module("rlgym_rocket_league")
+    sys.modules["rlgym_sim"] = _rlgym_rl
+    globals().update(vars(_rlgym_rl))
+    envs = types.SimpleNamespace()
+    if hasattr(_rlgym_rl, 'make'):
+        envs.RLGymSimEnv = _rlgym_rl.make
+    sys.modules['rlgym_sim.envs'] = envs
+except ImportError as e:
+    raise ImportError("rlgym_rocket_league not installed. Install with: pip install rlgym_rocket_league>=2.0.1") from e
+'''
+        rlgym_sim_shim.write_text(rlgym_sim_shim_content)
+        self.print_status('success', "Created rlgym_sim compatibility shim")
     
     def print_summary(self):
         """Print setup summary."""

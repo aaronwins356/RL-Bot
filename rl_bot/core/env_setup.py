@@ -1,5 +1,5 @@
 """
-Rocket League Gym environment setup using rlgym.rocket_league 2.0+.
+Rocket League Gym environment setup using rlgym_rocket_league 2.0+.
 Creates and configures the RL training environment.
 """
 
@@ -8,25 +8,50 @@ from typing import Dict, Any, Optional
 import gymnasium as gym
 from gymnasium import spaces
 
-# New RLGym 2.0+ API imports
-from rlgym.api import RLGym
-from rlgym.rocket_league.action_parsers import LookupTableAction, RepeatAction
-from rlgym.rocket_league.done_conditions import GoalCondition, NoTouchTimeoutCondition, TimeoutCondition, AnyCondition
-from rlgym.rocket_league.obs_builders import DefaultObs
-from rlgym.rocket_league.reward_functions import CombinedReward, GoalReward, TouchReward
-from rlgym.rocket_league.sim import RocketSimEngine
-from rlgym.rocket_league.state_mutators import MutatorSequence, FixedTeamSizeMutator, KickoffMutator
-from rlgym.rocket_league import common_values
-
-# Keep these for compatibility with custom reward functions and observers
+# New RLGym 2.0+ API imports - use rlgym_rocket_league directly
 try:
-    from rlgym.rocket_league.api import GameState, Car
-    PlayerData = Car  # In RLGym 2.0, Car is used instead of PlayerData
+    from rlgym_rocket_league.api import RLGym
+    from rlgym_rocket_league.rocket_league.action_parsers import LookupTableAction, RepeatAction
+    from rlgym_rocket_league.rocket_league.done_conditions import GoalCondition, NoTouchTimeoutCondition, TimeoutCondition, AnyCondition
+    from rlgym_rocket_league.rocket_league.obs_builders import DefaultObs
+    from rlgym_rocket_league.rocket_league.reward_functions import CombinedReward, GoalReward, TouchReward
+    from rlgym_rocket_league.rocket_league.sim import RocketSimEngine
+    from rlgym_rocket_league.rocket_league.state_mutators import MutatorSequence, FixedTeamSizeMutator, KickoffMutator
+    from rlgym_rocket_league.rocket_league import common_values
+    
+    # Keep these for compatibility with custom reward functions and observers
+    try:
+        from rlgym_rocket_league.rocket_league.api import GameState, Car
+        PlayerData = Car  # In RLGym 2.0, Car is used instead of PlayerData
+    except ImportError:
+        # Fallback for different API versions
+        from rlgym_rocket_league.api import GameState
+        class PlayerData:
+            pass
 except ImportError:
-    # Fallback for different API versions
-    from rlgym.api import GameState
-    class PlayerData:
-        pass
+    # Fallback to compatibility shim if available
+    try:
+        from rlgym.api import RLGym
+        from rlgym.rocket_league.action_parsers import LookupTableAction, RepeatAction
+        from rlgym.rocket_league.done_conditions import GoalCondition, NoTouchTimeoutCondition, TimeoutCondition, AnyCondition
+        from rlgym.rocket_league.obs_builders import DefaultObs
+        from rlgym.rocket_league.reward_functions import CombinedReward, GoalReward, TouchReward
+        from rlgym.rocket_league.sim import RocketSimEngine
+        from rlgym.rocket_league.state_mutators import MutatorSequence, FixedTeamSizeMutator, KickoffMutator
+        from rlgym.rocket_league import common_values
+        
+        try:
+            from rlgym.rocket_league.api import GameState, Car
+            PlayerData = Car
+        except ImportError:
+            from rlgym.api import GameState
+            class PlayerData:
+                pass
+    except ImportError as e:
+        raise ImportError(
+            "Cannot import rlgym_rocket_league. "
+            "Install it with: pip install rlgym_rocket_league>=2.0.1"
+        ) from e
 
 
 # Compatibility base classes for legacy code
