@@ -5,12 +5,9 @@ numpy>=1.24.0,<2.0.0
 # Gymnasium (RL framework)
 gymnasium>=0.29.0
 
-# RLGym-Rocket-League (install from git)
-# Install these with:
-# pip install git+https://github.com/RLGym/rlgym-rocket-league.git
-# pip install git+https://github.com/RLGym/rlgym-tools.git
-# rlgym-rocket-league
-# rlgym-tools
+# RLGym-Rocket-League 2.0+ (unified API)
+rlgym-rocket-league>=2.0.1
+rlgym-tools>=2.3.13
 
 # RLBot and RocketSim (for deployment)
 rlbot>=1.67

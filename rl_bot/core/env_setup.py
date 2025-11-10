@@ -1,5 +1,5 @@
 """
-Rocket League Gym environment setup using rlgym.
+Rocket League Gym environment setup using rlgym_rocket_league 2.0+.
 Creates and configures the RL training environment.
 """
 
@@ -8,16 +8,15 @@ from typing import Dict, Any, Optional
 import gymnasium as gym
 from gymnasium import spaces
 
-from rlgym_sim.envs import RLGymSimEnv
-from rlgym_sim.utils.state_setters import DefaultState
-from rlgym_sim.utils.obs_builders import ObsBuilder
-from rlgym_sim.utils.action_parsers import ActionParser
-from rlgym_sim.utils.terminal_conditions.common_conditions import (
+from rlgym_rocket_league.utils.state_setters import DefaultState
+from rlgym_rocket_league.utils.obs_builders import ObsBuilder
+from rlgym_rocket_league.utils.action_parsers import ActionParser
+from rlgym_rocket_league.utils.terminal_conditions.common_conditions import (
     TimeoutCondition, GoalScoredCondition
 )
-from rlgym_sim.utils.reward_functions import CombinedReward
-
-from rlgym_sim.utils.gamestates import GameState, PlayerData
+from rlgym_rocket_league.utils.reward_functions import CombinedReward
+from rlgym_rocket_league.utils.gamestates import GameState, PlayerData
+from rlgym_rocket_league import make as make_rlgym_env
 
 
 class SimpleObsBuilder(ObsBuilder):
@@ -203,8 +202,8 @@ def create_rlgym_env(
     # Create state setter (spawning configuration)
     state_setter = DefaultState()
     
-    # Create environment
-    env = RLGymSimEnv(
+    # Create environment using rlgym_rocket_league 2.0+ API
+    env = make_rlgym_env(
         tick_skip=tick_skip,
         team_size=team_size,
         spawn_opponents=spawn_opponents,

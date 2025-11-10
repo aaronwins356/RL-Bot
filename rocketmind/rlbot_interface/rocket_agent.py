@@ -78,9 +78,9 @@ class RocketAgent(BaseAgent if RLBOT_AVAILABLE else object):
         
         # Create RLBot adapter
         if self.model is not None:
-            # Need action parser from rlgym - simplified for now
-            from rlgym.utils.action_parsers import DiscreteAction
-            action_parser = DiscreteAction()
+            # Use action parser from rl_bot environment setup (compatible with new API)
+            from rl_bot.core.env_setup import DiscreteActionParser
+            action_parser = DiscreteActionParser()
             
             tick_skip = self.config.get('rlbot', {}).get('tick_skip', 8)
             self.adapter = RLBotAdapter(self.model, self.device, action_parser, tick_skip)

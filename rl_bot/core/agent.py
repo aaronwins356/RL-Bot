@@ -6,7 +6,7 @@ This agent can use both neural network decisions and heuristic overrides.
 import torch
 import numpy as np
 from typing import Optional, Dict, Any, Tuple
-from rlgym_sim.utils.gamestates import GameState, PlayerData
+from rlgym_rocket_league.utils.gamestates import GameState, PlayerData
 
 from rl_bot.core.model import ActorCritic
 from rl_bot.core.behaviors import BehaviorCoordinator

@@ -7,7 +7,7 @@ that can override or guide the learned policy.
 import numpy as np
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
-from rlgym_sim.utils.gamestates import GameState, PlayerData
+from rlgym_rocket_league.utils.gamestates import GameState, PlayerData
 
 
 @dataclass
