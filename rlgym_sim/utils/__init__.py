@@ -1,19 +1,19 @@
 """
 Compatibility shim for rlgym_sim.utils.
-Redirects to rlgym_rocket_league.utils.
+Redirects to rlgym.rocket_league.utils.
 """
 
 import warnings
 
 warnings.warn(
-    "rlgym_sim.utils is deprecated. Use rlgym_rocket_league.utils instead.",
+    "rlgym_sim.utils is deprecated. Use rlgym.rocket_league.utils instead.",
     DeprecationWarning,
     stacklevel=2
 )
 
-# Re-export from rlgym_rocket_league
-from rlgym_rocket_league.utils import *
-from rlgym_rocket_league import utils as _utils
+# Re-export from rlgym.rocket_league
+from rlgym.rocket_league.utils import *
+from rlgym.rocket_league import utils as _utils
 
 # Make submodules available
 gamestates = _utils.gamestates
