@@ -1,38 +1,44 @@
-# Core RL dependencies
-rlgym>=2.0.1
-rlgym-tools>=1.8.3
-rlgym-sim>=2.0.1
+# Core Deep Learning
+torch>=2.2.0
+numpy>=1.24.0,<2.0.0
+
+# Gymnasium (RL framework)
 gymnasium>=0.29.0
 
-# RLBot compatibility (optional, for deployment)
-# rlgym-compat>=1.0.0  # Uncomment when deploying to RLBot
-# rlbot>=1.0.0  # Uncomment for RLBot GUI integration
+# RLGym-Rocket-League (install from git)
+# Install these with:
+# pip install git+https://github.com/RLGym/rlgym-rocket-league.git
+# pip install git+https://github.com/RLGym/rlgym-tools.git
+# rlgym-rocket-league
+# rlgym-tools
 
-# Deep learning
-torch>=2.2.0
-numpy>=1.24.0
+# RLBot and RocketSim (for deployment)
+rlbot>=1.67
+rocketsim>=2.1
 
-# Training and logging
+# Streamlit Dashboard
+streamlit>=1.30.0
+plotly>=5.17.0
+pygame>=2.5.0
+
+# Training and Logging
 tensorboard>=2.14.0
 pyyaml>=6.0.1
-
-# Streamlit dashboard
-streamlit>=1.28.0
-plotly>=5.17.0
+wandb>=0.16.0
 
 # Utilities
 tqdm>=4.65.0
 matplotlib>=3.7.0
-
-# Optional: For evaluation visualization
 seaborn>=0.12.0
 pandas>=2.0.0
 
 # Optional: WebSocket streaming
-# websockets>=12.0  # Uncomment for live telemetry streaming
+websockets>=12.0
 
 # Optional: Discord notifications
-# aiohttp>=3.9.0  # Uncomment for Discord webhook integration
+aiohttp>=3.9.0
 
-# Optional: Weights & Biases
-# wandb>=0.16.0  # Uncomment for W&B integration
+# Development tools (optional)
+pytest>=7.4.0
+black>=23.0.0
+flake8>=6.0.0
