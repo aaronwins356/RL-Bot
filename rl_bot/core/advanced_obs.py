@@ -5,8 +5,14 @@ Extends the base observation with teammate/opponent info and predictions.
 
 import numpy as np
 from typing import Optional
-from rlgym.api import ObsBuilder
-from rlgym.rocket_league.api import GameState, Car
+
+# Try modern import first, then fallback to compatibility shim
+try:
+    from rlgym_rocket_league.api import ObsBuilder
+    from rlgym_rocket_league.rocket_league.api import GameState, Car
+except ImportError:
+    from rlgym.api import ObsBuilder
+    from rlgym.rocket_league.api import GameState, Car
 
 # For compatibility with old code, alias Car as PlayerData
 PlayerData = Car
